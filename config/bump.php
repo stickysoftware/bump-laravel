@@ -19,6 +19,11 @@ return [
     // a PHP worker; queued sends keep the HTTP client's own default. Slow answers are logged.
     'sync_timeout' => (int) env('BUMP_SYNC_TIMEOUT', 5),
 
+    // How a model becomes a handle when it has no bumpHandle(). "prefixed_id" uses its prefixed ID from
+    // spatie/laravel-prefixed-ids when it has one, "key" always uses type plus key (user_12).
+    // Changing this after events were sent gives every model a new handle.
+    'handles' => env('BUMP_HANDLES', 'prefixed_id'),
+
     // Null uses the app's default connection and queue.
     'queue' => [
         'connection' => env('BUMP_QUEUE_CONNECTION'),

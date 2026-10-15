@@ -3,10 +3,13 @@
 // What a call puts in the request body, which token sends it, and when nothing is sent at all.
 
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use StickySoftware\Bump\Facades\Bump;
 use StickySoftware\Bump\Tests\Fixtures\Shop;
@@ -172,13 +175,51 @@ describe('identifiables', function () {
         'a label map' => [['team_8' => 'Acme BV']],
     ]);
 
-    it('names a model after its class and key', function () {
+    it('names a model after its prefixed ID by default', function () {
+        Bump::track('orders', identifiable: new User(['id' => 12, 'prefixed_id' => 'usr_3f9a']));
+        Bump::flush();
+
+        expect(sentEvents()[0]['identifiable'])->toBe('usr_3f9a');
+    });
+
+    it('names a model after its class and key without a prefixed ID', function () {
         Bump::track('orders', identifiable: new User(['id' => 12]));
+        Bump::track('orders', identifiable: new User(['id' => 13, 'prefixed_id' => null]));
+        Bump::track('orders', identifiable: new User(['id' => 14, 'prefixed_id' => '']));
         Bump::track('orders', identifiable: new TeamMember(['id' => 3]));
         Bump::flush();
 
-        expect(sentEvents()[0]['identifiable'])->toBe('user_12')
-            ->and(sentEvents()[1]['identifiable'])->toBe('team_member_3');
+        expect(array_column(sentEvents(), 'identifiable'))->toBe(['user_12', 'user_13', 'user_14', 'team_member_3']);
+    });
+
+    it('ignores the prefixed ID with handles set to key', function () {
+        config(['bump.handles' => 'key']);
+
+        Bump::track('orders', identifiable: new User(['id' => 12, 'prefixed_id' => 'usr_3f9a']));
+        Bump::flush();
+
+        expect(sentEvents()[0]['identifiable'])->toBe('user_12');
+    });
+
+    it('reads the attribute name from the prefixed-ids config', function () {
+        config(['prefixed-ids.prefixed_id_attribute_name' => 'public_id']);
+
+        Bump::track('orders', identifiable: new User(['id' => 12, 'public_id' => 'usr_77c1', 'prefixed_id' => 'usr_old']));
+        Bump::flush();
+
+        expect(sentEvents()[0]['identifiable'])->toBe('usr_77c1');
+    });
+
+    it('treats an unknown handles setting as key, warning once', function () {
+        config(['bump.handles' => 'uuid']);
+        Log::spy();
+
+        Bump::track('orders', identifiable: new User(['id' => 12, 'prefixed_id' => 'usr_3f9a']));
+        Bump::track('orders', identifiable: new User(['id' => 13, 'prefixed_id' => 'usr_8b2e']));
+        Bump::flush();
+
+        expect(array_column(sentEvents(), 'identifiable'))->toBe(['user_12', 'user_13']);
+        Log::shouldHaveReceived('warning')->once()->withArgs(fn (string $message) => str_contains($message, 'BUMP_HANDLES=uuid'));
     });
 
     it('prefers the morph map alias', function () {
@@ -190,12 +231,14 @@ describe('identifiables', function () {
         expect(sentEvents()[0]['identifiable'])->toBe('customer_12');
     });
 
-    it('uses bumpHandle() when the model has one', function () {
-        Bump::track('orders', identifiable: new Shop(['id' => 1, 'slug' => 'acme']));
+    it('uses bumpHandle() when the model has one', function (string $handles) {
+        config(['bump.handles' => $handles]);
+
+        Bump::track('orders', identifiable: new Shop(['id' => 1, 'slug' => 'acme', 'prefixed_id' => 'shp_91d0']));
         Bump::flush();
 
         expect(sentEvents()[0]['identifiable'])->toBe('shop_acme');
-    });
+    })->with(['prefixed_id', 'key']);
 
     it('sends a label only from bumpLabel()', function () {
         Bump::track('orders', identifiable: new Team(['id' => 8, 'name' => 'Acme BV']));
@@ -215,6 +258,102 @@ describe('identifiables', function () {
             ['handle' => 'team_8', 'label' => 'Acme BV'],
             'store_2',
         ]);
+    });
+
+    it('mixes models with prefixed IDs in a list', function () {
+        $user = new User(['id' => 1, 'prefixed_id' => 'usr_3f9a']);
+        $team = new Team(['id' => 8, 'prefixed_id' => 'tem_c02d', 'name' => 'Acme BV']);
+
+        Bump::track('orders', identifiable: [$user, $team]);
+        Bump::flush();
+
+        expect(sentEvents()[0]['identifiable'])->toBe([
+            'usr_3f9a',
+            ['handle' => 'tem_c02d', 'label' => 'Acme BV'],
+        ]);
+    });
+
+    it('drops the event with a warning for a handle over 64 characters', function () {
+        Log::spy();
+
+        Bump::track('orders', identifiable: new User(['id' => 1, 'prefixed_id' => 'usr_'.str_repeat('a', 60)]));
+        Bump::track('orders', identifiable: new User(['id' => 2, 'prefixed_id' => 'usr_'.str_repeat('a', 61)]));
+        Bump::track('orders', identifiable: new Shop(['id' => 3, 'slug' => str_repeat('a', 60)]));
+        Bump::flush();
+
+        expect(sentEvents())->toHaveCount(1)
+            ->and(sentEvents()[0]['identifiable'])->toBe('usr_'.str_repeat('a', 60));
+        Log::shouldHaveReceived('warning')->twice()->withArgs(fn (string $message, array $context) => str_contains($message, 'dropped an event')
+            && str_contains($context['exception'], 'at most 64'));
+    });
+
+    it('warns once per class when a model with the trait has no prefixed ID', function () {
+        Log::spy();
+
+        Bump::track('orders', identifiable: new User(['id' => 12, 'prefixed_id' => null]));
+        Bump::track('orders', identifiable: new User(['id' => 13, 'prefixed_id' => '']));
+        Bump::track('orders', identifiable: new Team(['id' => 8, 'prefixed_id' => null]));
+        Bump::track('orders', identifiable: new TeamMember(['id' => 3]));
+        Bump::flush();
+
+        expect(array_column(sentEvents(), 'identifiable'))->toBe(['user_12', 'user_13', 'team_8', 'team_member_3']);
+        Log::shouldHaveReceived('warning', ['Bump fell back to user_12 style handles for '.User::class.': some rows have no prefixed_id.'])->once();
+        Log::shouldHaveReceived('warning', ['Bump fell back to team_8 style handles for '.Team::class.': some rows have no prefixed_id.'])->once();
+        Log::shouldHaveReceived('warning')->twice();
+    });
+
+    describe('stored models', function () {
+        beforeEach(function () {
+            config(['database.default' => 'sqlite', 'database.connections.sqlite.database' => ':memory:']);
+
+            Schema::create('users', function (Blueprint $table) {
+                $table->id();
+                $table->string('prefixed_id')->nullable();
+                $table->softDeletes();
+            });
+
+            DB::table('users')->insert([
+                ['id' => 1, 'prefixed_id' => 'usr_3f9a', 'deleted_at' => null],
+                ['id' => 2, 'prefixed_id' => 'usr_8b2e', 'deleted_at' => '2026-10-01 12:00:00'],
+                ['id' => 3, 'prefixed_id' => null, 'deleted_at' => null],
+            ]);
+        });
+
+        it('fetches the prefixed ID of a partly loaded model once', function () {
+            $user = User::query()->select('id')->find(1);
+            $queries = 0;
+            DB::listen(function () use (&$queries) {
+                $queries++;
+            });
+
+            Bump::track('orders', identifiable: $user);
+            Bump::track('orders', identifiable: $user);
+            Bump::flush();
+
+            expect(array_column(sentEvents(), 'identifiable'))->toBe(['usr_3f9a', 'usr_3f9a'])
+                ->and($queries)->toBe(1)
+                ->and($user->isDirty())->toBeFalse();
+        });
+
+        it('fetches the prefixed ID of a soft-deleted model', function () {
+            Bump::track('orders', identifiable: User::withTrashed()->select('id')->find(2));
+            Bump::flush();
+
+            expect(sentEvents()[0]['identifiable'])->toBe('usr_8b2e');
+        });
+
+        it('falls back with a warning when the fetched prefixed ID is empty', function () {
+            Log::spy();
+            $user = User::query()->select('id')->find(3);
+
+            Bump::track('orders', identifiable: $user);
+            Bump::track('orders', identifiable: $user);
+            Bump::flush();
+
+            expect(array_column(sentEvents(), 'identifiable'))->toBe(['user_3', 'user_3'])
+                ->and($user->isDirty())->toBeFalse();
+            Log::shouldHaveReceived('warning', ['Bump fell back to user_3 style handles for '.User::class.': some rows have no prefixed_id.'])->once();
+        });
     });
 
     it('drops the event with a warning for an unsaved model', function () {

@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Http;
 use Orchestra\Testbench\TestCase as Orchestra;
 use StickySoftware\Bump\Bump;
 use StickySoftware\Bump\BumpServiceProvider;
+use StickySoftware\Bump\Identifiables;
 
 abstract class TestCase extends Orchestra
 {
@@ -14,6 +15,7 @@ abstract class TestCase extends Orchestra
         parent::setUp();
 
         Bump::forgetReportedMissingToken();
+        Identifiables::forgetReportedWarnings();
         Http::preventStrayRequests();
     }
 

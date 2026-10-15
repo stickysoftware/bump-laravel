@@ -28,7 +28,8 @@ Bump::adjust('orders', identifiable: $order->user, amount: -25.00, note: 'partia
 
 ## Identifiables
 
-- Pass the Eloquent model, not its id: `identifiable: $user`. The handle becomes the morph map alias or the snake_case class name plus the key: `user_12`, `team_8`.
+- Pass the Eloquent model, not its id: `identifiable: $user`. When the app uses `spatie/laravel-prefixed-ids`, the handle is the model's prefixed ID (`usr_3f9a…`). Otherwise it's the morph map alias or the snake_case class name plus the key: `user_12`, `team_8`.
+- Never change `BUMP_HANDLES` once events are live: every model would get a new handle, with totals from zero.
 - Pass a list for an event that belongs to several: `identifiable: [$user, $team]`.
 - Define `bumpHandle(): string` on the model to change its handle. Keep handles stable: a changed handle is a new identifiable with totals from zero.
 - Define `bumpLabel(): ?string` on the model to send a display label. Without it, no label is sent.

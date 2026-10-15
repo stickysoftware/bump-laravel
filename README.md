@@ -44,6 +44,7 @@ php artisan vendor:publish --tag=bump-config
 | `BUMP_URL` | `https://api.bumpbunny.dev/v1` | |
 | `BUMP_DELIVERY` | `queue` | `queue` or `sync` |
 | `BUMP_SYNC_TIMEOUT` | `5` | seconds, `sync` only |
+| `BUMP_HANDLES` | `prefixed_id` | `prefixed_id` or `key`, see [Identifiables](#identifiables) |
 | `BUMP_QUEUE_CONNECTION` | app default | |
 | `BUMP_QUEUE` | app default | |
 | `BUMP_ENABLED` | `true` | `false` drops every call |
@@ -82,7 +83,15 @@ Bump::track(
 
 ### Identifiables
 
-Pass a string handle, a model, or a list mixing both. A model becomes its morph map alias, or its snake_case class name, plus its key: `user_12`, `team_member_3`.
+Pass a string handle, a model, or a list mixing both. A model becomes the first of these that it has:
+
+1. Its `bumpHandle()`, below.
+2. Its prefixed ID from [spatie/laravel-prefixed-ids](https://github.com/spatie/laravel-prefixed-ids): `usr_3f9a…`. Only with `BUMP_HANDLES=prefixed_id`, the default. The attribute name comes from that package's config. A model loaded without that column, `select('id')` for example, fetches it with one query. A row whose prefixed ID is empty gets the `user_12` handle below, with one warning per model class.
+3. Its morph map alias, or its snake_case class name, plus its key: `user_12`, `team_member_3`.
+
+`BUMP_HANDLES=key` skips the prefixed ID. Pick the setting before the first live event and leave it: changing it gives every model a new handle, so totals restart under new identifiables.
+
+A handle takes at most 64 characters. When a model's handle is longer, its event is dropped with a warning.
 
 Define these on a model to change what is sent:
 
