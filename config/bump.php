@@ -15,6 +15,10 @@ return [
     // "queue" sends from a queued job, "sync" sends over HTTP while the request or command terminates.
     'delivery' => env('BUMP_DELIVERY', 'queue'),
 
+    // Seconds a sync send may take. Sync mode sends while the request terminates, so a slow answer holds
+    // a PHP worker; queued sends keep the HTTP client's own default. Slow answers are logged.
+    'sync_timeout' => (int) env('BUMP_SYNC_TIMEOUT', 5),
+
     // Null uses the app's default connection and queue.
     'queue' => [
         'connection' => env('BUMP_QUEUE_CONNECTION'),

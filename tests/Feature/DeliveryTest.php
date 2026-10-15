@@ -154,6 +154,30 @@ describe('sync delivery', function () {
         expect($ids)->toHaveCount(1);
     });
 
+    it('logs an answer that took at least half the sync timeout, with the time it took', function () {
+        Log::spy();
+        Http::fake(function () {
+            $this->travel(3)->seconds();
+
+            return Http::response(['object' => 'list', 'data' => [['object' => 'event', 'status' => 'accepted']]]);
+        });
+
+        Bump::track('orders');
+        Bump::flush();
+
+        Log::shouldHaveReceived('warning')->once()->with('Bump took 3.0s to answer (sync timeout 5s).');
+    });
+
+    it('stays quiet when the answer is quick', function () {
+        Log::spy();
+        Http::fake(['*' => Http::response(['object' => 'list', 'data' => [['object' => 'event', 'status' => 'accepted']]])]);
+
+        Bump::track('orders');
+        Bump::flush();
+
+        Log::shouldNotHaveReceived('warning');
+    });
+
     it('waits as long as Retry-After says', function () {
         Http::fake(['*' => Http::sequence()
             ->push(null, 429, ['Retry-After' => '3'])

@@ -21,7 +21,7 @@ final class Delivery
     public function deliver(array $events): void
     {
         if (config('bump.delivery') === 'sync') {
-            $this->sendNow($events);
+            $this->sendNow($events, timeout: (int) config('bump.sync_timeout'));
 
             return;
         }
@@ -45,10 +45,10 @@ final class Delivery
      *
      * @param  list<array<string, mixed>>  $events
      */
-    public function sendNow(array $events, bool $backfill = false, int $attempts = 3, int $maxWait = 10): SendResult
+    public function sendNow(array $events, bool $backfill = false, int $attempts = 3, int $maxWait = 10, ?int $timeout = null): SendResult
     {
         for ($attempt = 1; ; $attempt++) {
-            $result = $this->api->send($events, $backfill);
+            $result = $this->api->send($events, $backfill, $timeout);
 
             if ($result->outcome !== SendOutcome::Retry) {
                 return $result;

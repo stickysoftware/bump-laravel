@@ -43,6 +43,7 @@ php artisan vendor:publish --tag=bump-config
 | `BUMP_TEST_TOKEN` | | Used in every other environment |
 | `BUMP_URL` | `https://api.bumpbunny.dev/v1` | |
 | `BUMP_DELIVERY` | `queue` | `queue` or `sync` |
+| `BUMP_SYNC_TIMEOUT` | `5` | seconds, `sync` only |
 | `BUMP_QUEUE_CONNECTION` | app default | |
 | `BUMP_QUEUE` | app default | |
 | `BUMP_ENABLED` | `true` | `false` drops every call |
@@ -107,7 +108,7 @@ Bump counts an event as activity (DAU, WAU, MAU) by the trackable's setting. Web
 
 Calls go into a buffer that is sent once per web request or console command (when it terminates) and once per queued job (when it's processed or fails), or earlier when it holds 100 events. Each event gets its id and `occurred_at` when you call `track()`, not when the buffer is sent.
 
-With `BUMP_DELIVERY=queue` the buffer goes out as a queued job, so the app needs a running worker. Use `sync` for apps without one: the HTTP request then happens while the request or command terminates.
+With `BUMP_DELIVERY=queue` the buffer goes out as a queued job, so the app needs a running worker. Use `sync` for apps without one: the HTTP request then happens while the request or command terminates, limited to `BUMP_SYNC_TIMEOUT` seconds. An answer that takes at least half that logs a warning with the measured time (`Bump took 3.4s to answer (sync timeout 5s).`). If those lines show up, raise the timeout or switch to `queue`.
 
 ### Failures
 

@@ -28,7 +28,7 @@ final class Api
     /**
      * @param  list<array<string, mixed>>  $events
      */
-    public function send(array $events, bool $backfill = false): SendResult
+    public function send(array $events, bool $backfill = false, ?int $timeout = null): SendResult
     {
         $token = $this->token();
 
@@ -38,16 +38,26 @@ final class Api
             return SendResult::failed('No token.');
         }
 
+        $request = Http::withToken($token)->acceptJson();
+
+        if ($timeout !== null) {
+            $request->timeout($timeout);
+        }
+
+        $startedAt = Carbon::now();
+
         try {
-            $response = Http::withToken($token)
-                ->acceptJson()
-                ->post(rtrim((string) config('bump.url'), '/').'/events', [
-                    'backfill' => $backfill,
-                    'events' => $events,
-                ]);
+            $response = $request->post(rtrim((string) config('bump.url'), '/').'/events', [
+                'backfill' => $backfill,
+                'events' => $events,
+            ]);
         } catch (ConnectionException $e) {
+            $this->logSlow($startedAt, $timeout);
+
             return SendResult::retry(null, $e->getMessage());
         }
+
+        $this->logSlow($startedAt, $timeout);
 
         if ($response->successful()) {
             $results = $response->json('data');
@@ -103,6 +113,23 @@ final class Api
             }
 
             $position += $size;
+        }
+    }
+
+    /**
+     * The signal for tuning BUMP_SYNC_TIMEOUT: these lines appearing means the timeout is close to what
+     * Bump actually needs.
+     */
+    private function logSlow(Carbon $startedAt, ?int $timeout): void
+    {
+        if ($timeout === null) {
+            return;
+        }
+
+        $seconds = $startedAt->diffInMilliseconds(Carbon::now()) / 1000;
+
+        if ($seconds >= $timeout / 2) {
+            Log::warning(sprintf('Bump took %.1fs to answer (sync timeout %ds).', $seconds, $timeout));
         }
     }
 
