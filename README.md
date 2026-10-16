@@ -133,11 +133,13 @@ Connection errors, 5xx and 429 are retried, waiting for `Retry-After` when Bump 
 
 ## Backfill
 
-Live events carry ids the package makes up, so Bump can't match them to the same events sent again with ids from your data. A backfill that sends anything from after live counting started counts it twice.
+Each kind of history gets a class:
 
-So every backfill runs up to `--until`: the moment live counting started. Bump shows it as Tracking since, in Developers > Events of the project's live environment. Copy it there and pass it as `--until`. The copied value carries its offset (`2026-10-16T14:02:11+02:00`), so it means the same moment in any app timezone.
+```bash
+php artisan make:bump-backfill OrdersBackfill
+```
 
-Write a class that yields events in the API's item shape, from inside the window it gets:
+That writes `app/Bump/OrdersBackfill.php`. It reads `App\Models\Model` by `created_at` and sends `orders` events with ids like `orders-1042`. Put in your model and the column the event happened at, and add what else the event carries:
 
 ```php
 namespace App\Bump;
@@ -150,20 +152,26 @@ class OrdersBackfill implements Backfill
 {
     public function events(BackfillWindow $window): iterable
     {
-        $orders = $window->constrain(Order::with('user'), 'paid_at')->lazyById();
+        $rows = $window->constrain(Order::with('user'), 'paid_at')->lazyById();
 
-        foreach ($orders as $order) {
+        foreach ($rows as $row) {
             yield [
-                'id' => "order-{$order->id}",
+                'id' => "orders-{$row->id}",
                 'trackable' => 'orders',
-                'identifiable' => $order->user,
-                'amount' => $order->total,
-                'occurred_at' => $order->paid_at,
+                'identifiable' => $row->user,
+                'amount' => $row->total,
+                'occurred_at' => $row->paid_at,
             ];
         }
     }
 }
 ```
+
+Events are in the API's item shape. To change what the command generates, publish its stub with `php artisan vendor:publish --tag=bump-stubs` and edit `stubs/bump-backfill.stub`.
+
+Live events carry ids the package makes up, so Bump can't match them to the same events sent again with ids from your data. A backfill that sends anything from after live counting started counts it twice.
+
+So every backfill runs up to `--until`: the moment live counting started. Bump shows it as Tracking since, in Developers > Events of the project's live environment. Copy it there and pass it as `--until`. The copied value carries its offset (`2026-10-16T14:02:11+02:00`), so it means the same moment in any app timezone.
 
 `constrain()` keeps rows with `paid_at` before `until`, and from `since` on when there is one. `$window->until` and `$window->since` are there for queries it doesn't fit. Both are in the app timezone: Laravel puts a date into a query as its clock time, without converting it.
 

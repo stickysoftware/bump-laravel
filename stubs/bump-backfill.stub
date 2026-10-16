@@ -1,0 +1,28 @@
+<?php
+
+namespace {{ namespace }};
+
+use App\Models\Model;
+use StickySoftware\Bump\Backfill\BackfillWindow;
+use StickySoftware\Bump\Contracts\Backfill;
+
+/**
+ * Derive each id from the row, so a rerun skips what was already sent. Stay inside the window,
+ * so events live counting already counted aren't counted twice.
+ */
+class {{ class }} implements Backfill
+{
+    public function events(BackfillWindow $window): iterable
+    {
+        $rows = $window->constrain(Model::query(), 'created_at')->lazyById();
+
+        foreach ($rows as $row) {
+            yield [
+                'id' => "{{ prefix }}-{$row->id}",
+                'trackable' => '{{ prefix }}',
+                // 'identifiable' => $row->user,
+                'occurred_at' => $row->created_at,
+            ];
+        }
+    }
+}

@@ -43,15 +43,16 @@ Bump::adjust('orders', identifiable: $order->user, amount: -25.00, note: 'partia
 
 ## Backfill
 
-- To import history, write a class implementing `StickySoftware\Bump\Contracts\Backfill` and run `php artisan bump:backfill "App\Bump\OrdersBackfill" "App\Bump\RefundsBackfill" --until="<Tracking since>"`.
+- To import history, generate a class per kind of history with `php artisan make:bump-backfill OrdersBackfill` (it writes `app/Bump/OrdersBackfill.php`), fill it in, and run `php artisan bump:backfill "App\Bump\OrdersBackfill" "App\Bump\RefundsBackfill" --until="<Tracking since>"`.
+- Generate backfill classes, don't write them from scratch. In the generated class, replace the `App\Models\Model` placeholder with the real model and `created_at` with the column the event happened at, check the trackable, and add `identifiable`, `count` or `amount` where they apply.
 - `--until` is when live counting began: copy Tracking since from Developers > Events in the project's live environment in Bump, and pass it as is (it carries its offset). Never guess it and never use now: events after it were already counted live, under ids that don't match, so Bump counts them twice.
 - Always constrain the query with the window: `$window->constrain($query, 'paid_at')`. It keeps rows before `until` and, with `--since`, from `since` on. Use `$window->until` and `$window->since` (app timezone) for queries it doesn't fit.
-- Every event needs an `id` derived from the app's own data (`order-1042`, `refund-77`), max 64 characters. Never a random UUID: the same id makes a rerun skip what was already sent.
+- Every event needs an `id` derived from the app's own data (`orders-1042`, `refunds-77`), max 64 characters. Never a random UUID: the same id makes a rerun skip what was already sent.
 - Every event needs an `occurred_at` from the row (`$order->paid_at`). An event without one is rejected.
 - Iterate with `lazyById()`, `lazy()` or `cursor()` so large tables don't load into memory.
 - Run with `--dry-run` first: it counts what each class would send without sending.
 
-@boostsnippet('Backfill class', 'php')
+@boostsnippet('Backfill class, filled in after make:bump-backfill OrdersBackfill', 'php')
 namespace App\Bump;
 
 use App\Models\Order;
@@ -62,15 +63,15 @@ class OrdersBackfill implements Backfill
 {
     public function events(BackfillWindow $window): iterable
     {
-        $orders = $window->constrain(Order::with('user'), 'paid_at')->lazyById();
+        $rows = $window->constrain(Order::with('user'), 'paid_at')->lazyById();
 
-        foreach ($orders as $order) {
+        foreach ($rows as $row) {
             yield [
-                'id' => "order-{$order->id}",
+                'id' => "orders-{$row->id}",
                 'trackable' => 'orders',
-                'identifiable' => $order->user,
-                'amount' => $order->total,
-                'occurred_at' => $order->paid_at,
+                'identifiable' => $row->user,
+                'amount' => $row->total,
+                'occurred_at' => $row->paid_at,
             ];
         }
     }

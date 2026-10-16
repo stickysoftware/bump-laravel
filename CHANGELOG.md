@@ -2,6 +2,13 @@
 
 All notable changes to `stickysoftware/bump-laravel` are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.5.0 - 2026-10-16
+
+### Added
+
+- `php artisan make:bump-backfill OrdersBackfill` writes a backfill class to `app/Bump/`, with ids prefixed `orders-`, the trackable `orders` and a placeholder model to replace. `--force` overwrites an existing class.
+- `php artisan vendor:publish --tag=bump-stubs` publishes the stub to `stubs/bump-backfill.stub`. The command uses the app's copy when there is one.
+
 ## 0.4.0 - 2026-10-16
 
 ### Changed

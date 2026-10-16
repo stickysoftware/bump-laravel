@@ -11,6 +11,7 @@ use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
 use StickySoftware\Bump\Console\BackfillCommand;
+use StickySoftware\Bump\Console\BackfillMakeCommand;
 
 class BumpServiceProvider extends ServiceProvider
 {
@@ -27,8 +28,9 @@ class BumpServiceProvider extends ServiceProvider
     {
         if ($this->app->runningInConsole()) {
             $this->publishes([__DIR__.'/../config/bump.php' => config_path('bump.php')], 'bump-config');
+            $this->publishes([__DIR__.'/../stubs/bump-backfill.stub' => base_path('stubs/bump-backfill.stub')], 'bump-stubs');
 
-            $this->commands([BackfillCommand::class]);
+            $this->commands([BackfillCommand::class, BackfillMakeCommand::class]);
 
             AboutCommand::add('Bump', fn (Api $api) => [
                 'Enabled' => AboutCommand::format((bool) config('bump.enabled'), console: fn (bool $enabled) => $enabled ? 'ENABLED' : 'OFF'),
