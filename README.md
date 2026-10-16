@@ -53,6 +53,8 @@ Create both tokens in the Bump dashboard, under the project's settings in live a
 
 Without the token for the current environment, the package is off: calls are accepted and dropped, with one `debug` log line per process.
 
+`php artisan about` has a Bump section with these settings, and which token the environment uses and whether it's set. Never the token itself.
+
 ## Usage
 
 ```php
@@ -162,6 +164,29 @@ php artisan bump:backfill "App\Bump\OrdersBackfill"
 
 Every event needs an `id` built from your own data (max 64 characters). Running the backfill again then skips what was already sent, and an event without an `id` is rejected. Events go out in batches of 100, marked as backfill, so milestones they reach never fire integrations. The command ends with how many events were accepted, duplicate and rejected, and why.
 
+## Testing your app
+
+`Bump::fake()` records calls and sends nothing, so tests never reach the API:
+
+```php
+use StickySoftware\Bump\Facades\Bump;
+use StickySoftware\Bump\Testing\TrackedEvent;
+
+test('paying an order tracks it', function () {
+    Bump::fake();
+    $order = Order::factory()->create();
+
+    $this->post("/orders/{$order->id}/pay");
+
+    Bump::assertTracked('orders', fn (TrackedEvent $event) => $event->hasIdentifiable($order->user));
+    Bump::assertNotTracked('refunds');
+});
+```
+
+Also there: `assertTrackedTimes('orders', 2)`, `assertNothingTracked()`, and `tracked('orders')` for a collection of calls. The fake records with or without a token.
+
+The callback gets a `TrackedEvent` per call: `trackable`, `identifiables`, `count`, `amount`, `occurredAt`, `note`, `activity` and `adjustment`. Models are resolved to handles like in real delivery, and a call real delivery would drop, an unsaved model for example, is dropped here too: the failing assertion says why. `adjust()` calls count as tracked, with `adjustment` true and their defaults filled in. A field the call leaves out is `null`.
+
 ## Known limits
 
 - Mass updates and deletes (`Order::where(...)->update(...)`) skip Eloquent model events, so tracking done in observers or model events won't happen for them. Call `Bump::track()` or `Bump::adjust()` next to those queries.
@@ -170,6 +195,10 @@ Every event needs an `id` built from your own data (max 64 characters). Running 
 ## AI agents
 
 The package ships [Laravel Boost](https://github.com/laravel/boost) guidelines in `resources/boost/guidelines/core.blade.php`. Run `php artisan boost:update` after installing and pick `stickysoftware/bump-laravel` when asked, and your app's agents learn how to use it.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md). Coming from 0.1? Read [UPGRADING.md](UPGRADING.md) before you update.
 
 ## Development
 

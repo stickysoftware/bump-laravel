@@ -3,6 +3,7 @@
 namespace StickySoftware\Bump;
 
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Foundation\Console\AboutCommand;
 use Illuminate\Queue\Events\JobAttempted;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
@@ -28,6 +29,16 @@ class BumpServiceProvider extends ServiceProvider
             $this->publishes([__DIR__.'/../config/bump.php' => config_path('bump.php')], 'bump-config');
 
             $this->commands([BackfillCommand::class]);
+
+            AboutCommand::add('Bump', fn (Api $api) => [
+                'Enabled' => AboutCommand::format((bool) config('bump.enabled'), console: fn (bool $enabled) => $enabled ? 'ENABLED' : 'OFF'),
+                'Environment token' => $api->token() === null
+                    ? '<fg=yellow;options=bold>'.$api->tokenVariable().' missing</>'
+                    : $api->tokenVariable().' set',
+                'Delivery' => config('bump.delivery'),
+                'Handles' => config('bump.handles'),
+                'API URL' => config('bump.url'),
+            ]);
         }
 
         // Resolved through app() at call time, not $this->app: Octane runs each request in a clone.

@@ -70,6 +70,23 @@ class OrdersBackfill implements Backfill
 }
 @endboostsnippet
 
+## Testing
+
+- In feature tests that track, call `Bump::fake()` first, then assert with `Bump::assertTracked()`, `assertTrackedTimes()`, `assertNotTracked()` or `assertNothingTracked()`. Callbacks get a `StickySoftware\Bump\Testing\TrackedEvent`.
+- Never hit the real Bump API from tests: fake it, and keep `BUMP_TEST_TOKEN` and `BUMP_LIVE_TOKEN` out of `phpunit.xml` and `.env.testing`.
+
+@boostsnippet('Fake Bump in a test', 'php')
+use StickySoftware\Bump\Facades\Bump;
+use StickySoftware\Bump\Testing\TrackedEvent;
+
+Bump::fake();
+
+$this->post("/orders/{$order->id}/pay");
+
+Bump::assertTracked('orders', fn (TrackedEvent $event) => $event->hasIdentifiable($order->user));
+Bump::assertNotTracked('refunds');
+@endboostsnippet
+
 ## Known limit
 
 - Mass updates and deletes (`Order::where(...)->update(...)`, `->delete()`) skip model events, so nothing tracked in observers or model events fires for them. Call `Bump::track()` or `Bump::adjust()` yourself next to such queries.
