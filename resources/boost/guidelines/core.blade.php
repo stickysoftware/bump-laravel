@@ -43,21 +43,28 @@ Bump::adjust('orders', identifiable: $order->user, amount: -25.00, note: 'partia
 
 ## Backfill
 
-- To import history, write a class implementing `StickySoftware\Bump\Contracts\Backfill` and run `php artisan bump:backfill "App\Bump\OrdersBackfill"`.
+- To import history, write a class implementing `StickySoftware\Bump\Contracts\Backfill` and run `php artisan bump:backfill "App\Bump\OrdersBackfill" "App\Bump\RefundsBackfill" --until="<Tracking since>"`.
+- `--until` is when live counting began: copy Tracking since from Developers > Events in the project's live environment in Bump, and pass it as is (it carries its offset). Never guess it and never use now: events after it were already counted live, under ids that don't match, so Bump counts them twice.
+- Always constrain the query with the window: `$window->constrain($query, 'paid_at')`. It keeps rows before `until` and, with `--since`, from `since` on. Use `$window->until` and `$window->since` (app timezone) for queries it doesn't fit.
 - Every event needs an `id` derived from the app's own data (`order-1042`, `refund-77`), max 64 characters. Never a random UUID: the same id makes a rerun skip what was already sent.
-- Iterate with `lazy()` or `cursor()` so large tables don't load into memory.
+- Every event needs an `occurred_at` from the row (`$order->paid_at`). An event without one is rejected.
+- Iterate with `lazyById()`, `lazy()` or `cursor()` so large tables don't load into memory.
+- Run with `--dry-run` first: it counts what each class would send without sending.
 
 @boostsnippet('Backfill class', 'php')
 namespace App\Bump;
 
 use App\Models\Order;
+use StickySoftware\Bump\Backfill\BackfillWindow;
 use StickySoftware\Bump\Contracts\Backfill;
 
 class OrdersBackfill implements Backfill
 {
-    public function events(): iterable
+    public function events(BackfillWindow $window): iterable
     {
-        foreach (Order::with('user')->lazy() as $order) {
+        $orders = $window->constrain(Order::with('user'), 'paid_at')->lazyById();
+
+        foreach ($orders as $order) {
             yield [
                 'id' => "order-{$order->id}",
                 'trackable' => 'orders',

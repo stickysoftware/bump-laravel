@@ -2,6 +2,22 @@
 
 All notable changes to `stickysoftware/bump-laravel` are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.0 - 2026-10-16
+
+### Changed
+
+- Breaking: `Backfill::events()` takes a `StickySoftware\Bump\Backfill\BackfillWindow`. See `UPGRADING.md`.
+- Breaking: `bump:backfill` needs `--until`, when live counting started, and refuses a time in the future. Events after it were already counted live, so a backfill that sends them counts them twice.
+- Breaking: a backfill event without `occurred_at` is rejected (`occurred_at is required for a backfill.`). Bump would date it now, after the window.
+- `bump:backfill` takes several classes and runs them in order, stopping at the first one Bump doesn't take a batch from.
+- `bump:backfill` shows the window in the app timezone and in UTC and asks before sending.
+
+### Added
+
+- `BackfillWindow`, with `until` and `since` in the app timezone and `constrain($query, $column)`: since included, until not, so consecutive windows meet exactly.
+- `--since` to send history in slices, `--force` to skip the question, and `--dry-run` to count per class without sending or a token.
+- `bump:backfill` rejects an event whose `occurred_at` falls outside the window.
+
 ## 0.3.0 - 2026-10-16
 
 ### Added

@@ -133,19 +133,26 @@ Connection errors, 5xx and 429 are retried, waiting for `Retry-After` when Bump 
 
 ## Backfill
 
-Import history with a class that yields events in the API's item shape:
+Live events carry ids the package makes up, so Bump can't match them to the same events sent again with ids from your data. A backfill that sends anything from after live counting started counts it twice.
+
+So every backfill runs up to `--until`: the moment live counting started. Bump shows it as Tracking since, in Developers > Events of the project's live environment. Copy it there and pass it as `--until`. The copied value carries its offset (`2026-10-16T14:02:11+02:00`), so it means the same moment in any app timezone.
+
+Write a class that yields events in the API's item shape, from inside the window it gets:
 
 ```php
 namespace App\Bump;
 
 use App\Models\Order;
+use StickySoftware\Bump\Backfill\BackfillWindow;
 use StickySoftware\Bump\Contracts\Backfill;
 
 class OrdersBackfill implements Backfill
 {
-    public function events(): iterable
+    public function events(BackfillWindow $window): iterable
     {
-        foreach (Order::with('user')->lazy() as $order) {
+        $orders = $window->constrain(Order::with('user'), 'paid_at')->lazyById();
+
+        foreach ($orders as $order) {
             yield [
                 'id' => "order-{$order->id}",
                 'trackable' => 'orders',
@@ -158,11 +165,24 @@ class OrdersBackfill implements Backfill
 }
 ```
 
+`constrain()` keeps rows with `paid_at` before `until`, and from `since` on when there is one. `$window->until` and `$window->since` are there for queries it doesn't fit. Both are in the app timezone: Laravel puts a date into a query as its clock time, without converting it.
+
 ```bash
-php artisan bump:backfill "App\Bump\OrdersBackfill"
+php artisan bump:backfill "App\Bump\OrdersBackfill" "App\Bump\RefundsBackfill" --until="2026-10-16T14:02:11+02:00"
 ```
 
-Every event needs an `id` built from your own data (max 64 characters). Running the backfill again then skips what was already sent, and an event without an `id` is rejected. Events go out in batches of 100, marked as backfill, so milestones they reach never fire integrations. The command ends with how many events were accepted, duplicate and rejected, and why.
+`--until` and `--since` are read in the app timezone unless they name one. The command shows the window in the app timezone and in UTC and asks before sending; `--force` skips the question. Classes run in the order given. When Bump doesn't take a batch, the command stops at that class, and running the same command again carries on.
+
+Every event needs an `id` built from your own data (max 64 characters), so running the backfill again skips what was already sent. It also needs an `occurred_at`: Bump would date an event without one now, after the window. An event missing either is rejected. So is an event whose `occurred_at` falls outside the window, so a class that forgets `constrain()` still can't send the overlap. Events go out in batches of 100, marked as backfill, so milestones they reach never fire integrations. Each class ends with how many events were accepted, duplicate and rejected, and why.
+
+To send history in slices, start the later ones with `--since`. `since` is included and `until` isn't, so slices that share a boundary never overlap or leave a gap:
+
+```bash
+php artisan bump:backfill "App\Bump\OrdersBackfill" --until="2025-01-01"
+php artisan bump:backfill "App\Bump\OrdersBackfill" --since="2025-01-01" --until="2026-10-16T14:02:11+02:00"
+```
+
+`--dry-run` counts what each class would send, and what it would reject and why, without sending anything. It needs no token.
 
 ## Testing your app
 
@@ -198,7 +218,7 @@ The package ships [Laravel Boost](https://github.com/laravel/boost) guidelines i
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md). Coming from 0.1? Read [UPGRADING.md](UPGRADING.md) before you update.
+See [CHANGELOG.md](CHANGELOG.md). Coming from an earlier version? Read [UPGRADING.md](UPGRADING.md) before you update.
 
 ## Development
 

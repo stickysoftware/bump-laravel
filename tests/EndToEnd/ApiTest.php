@@ -48,10 +48,10 @@ it('backfills, and a rerun only finds duplicates', function () {
     ];
 
     ListBackfill::$events = $events();
-    $this->artisan('bump:backfill', ['class' => ListBackfill::class])->assertSuccessful();
+    $this->artisan('bump:backfill', ['class' => [ListBackfill::class], '--until' => now()->subDay()->toDateTimeString(), '--force' => true])->assertSuccessful();
 
     ListBackfill::$events = $events();
-    $this->artisan('bump:backfill', ['class' => ListBackfill::class])
+    $this->artisan('bump:backfill', ['class' => [ListBackfill::class], '--until' => now()->subDay()->toDateTimeString(), '--force' => true])
         ->expectsTable(['Accepted', 'Duplicate', 'Rejected'], [[0, 3, 0]])
         ->assertSuccessful();
 })->group('end-to-end');
