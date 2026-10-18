@@ -2,9 +2,11 @@
 
 // When the buffer goes out: once per request, command or job, early at 100 events, never when empty.
 
+use Illuminate\Container\Container;
 use Illuminate\Contracts\Queue\Job;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Facade;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
@@ -93,7 +95,7 @@ describe('on a queue worker', function () {
         app()->terminate();
 
         Http::assertNothingSent();
-        Log::shouldHaveReceived('warning')->once()->with('Bump dropped 1 events from a job attempt that failed and will run again.');
+        Log::shouldHaveReceived('warning')->once()->with('Bump dropped 1 event from a job attempt that failed and will run again.');
     });
 
     it('flushes the last attempt of a failing job', function () {
@@ -156,3 +158,55 @@ it('sends nothing when nothing was recorded', function (string $delivery) {
     Http::assertNothingSent();
     Queue::assertNotPushed(SendEvents::class);
 })->with(['sync', 'queue']);
+
+/**
+ * Octane serves each request from a clone of the booted app and resets scoped instances first.
+ */
+function octaneRequest(callable $handle, bool $terminate = true): void
+{
+    $app = app();
+    $sandbox = clone $app;
+
+    Container::setInstance($sandbox);
+    Facade::clearResolvedInstances();
+    Facade::setFacadeApplication($sandbox);
+
+    try {
+        $sandbox->forgetScopedInstances();
+        $handle();
+
+        if ($terminate) {
+            $sandbox->terminate();
+        }
+    } finally {
+        Container::setInstance($app);
+        Facade::clearResolvedInstances();
+        Facade::setFacadeApplication($app);
+    }
+}
+
+describe('under Octane', function () {
+    it('sends once per request, each with its own events', function () {
+        inWebRequest();
+
+        octaneRequest(fn () => Bump::track('orders'));
+        octaneRequest(function () {
+            Bump::track('members');
+            Bump::track('members');
+        });
+
+        $requests = collect(Http::recorded())->map(fn (array $pair) => array_column($pair[0]->data()['events'], 'trackable'))->all();
+
+        expect($requests)->toBe([['orders'], ['members', 'members']]);
+    });
+
+    it('starts every request with an empty buffer', function () {
+        inWebRequest();
+
+        Bump::track('booting');
+        octaneRequest(fn () => Bump::track('orders'), terminate: false);
+        octaneRequest(fn () => Bump::track('members'));
+
+        expect(array_column(sentEvents(), 'trackable'))->toBe(['members']);
+    });
+});

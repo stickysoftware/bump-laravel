@@ -9,14 +9,13 @@ use Illuminate\Database\Query\Builder;
 use InvalidArgumentException;
 
 /**
- * The stretch of history a backfill sends. `until` is when live counting started: events after it
- * were already counted live under package-generated ids, so sending them again counts them twice.
+ * `until` is when live counting started. Events after it were already counted live under other ids,
+ * so sending them again counts them twice.
  */
 final readonly class BackfillWindow
 {
     /**
-     * Both in the app timezone: query bindings format a date's wall clock without converting it,
-     * so a bound in any other timezone would compare against the wrong time.
+     * Both in the app timezone: query bindings use a date's clock time without converting it.
      */
     public CarbonImmutable $until;
 

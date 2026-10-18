@@ -9,16 +9,29 @@ This app sends events to Bump with `stickysoftware/bump-laravel`. Bump keeps exa
 - Trackable handles are lowercase `[a-z0-9_.-]`, max 64 characters, plural nouns: `orders`, `members`.
 - `count` defaults to 1 and `amount` to 0 on the server. Pass both when both matter: an order is one order and an amount. Amounts take at most 2 decimals, in the project currency.
 - Totals are additive. Never send a new total; send the difference, negative when it goes down.
+- Pass `id:` when the same thing can be tracked twice: a webhook delivered again, a job that runs twice. Derive it from the app's own data (`order-1042`), max 64 characters. One id per event: a refund gets its own (`refund-77`), never the order's. Without `id:` the package generates a UUID per call.
+- `count` and `amount` can't both be lists in one call; the package drops that call.
 
 @boostsnippet('Track and adjust', 'php')
 use StickySoftware\Bump\Facades\Bump;
 
-Bump::track('orders', identifiable: $order->user, amount: $order->total);
+Bump::track('orders', identifiable: $order->user, amount: $order->total, id: "order-{$order->id}");
 
 Bump::track('members', identifiable: $team, count: -1);
 
-Bump::adjust('orders', identifiable: $order->user, amount: -25.00, note: 'partial refund');
+Bump::adjust('orders', identifiable: $order->user, amount: -25.00, note: 'partial refund', id: "refund-{$refund->id}");
 @endboostsnippet
+
+## Sending
+
+- Calls are sent when the request, command or job ends. In a long-running loop or daemon that never ends, call `Bump::flush()` after each unit of work.
+- `BUMP_DELIVERY=queue` (default) needs a running queue worker. Use `sync` only for apps without one, and not under Octane.
+
+## Forgetting
+
+- Call `Bump::forget($user)` (a model or one handle) when a person asks for their data to be erased. Bump removes the label and replaces the handle; totals stay.
+- Call it where the app stops tracking that person, for example in the account deletion itself. Events recorded earlier in the same request, command or job go out first, but events queued earlier by other processes can still arrive after the forget and create the identifiable again.
+- The token needs "Can forget identifiables", set when it's created. Without it `forget()` logs a warning and forgets nothing.
 
 ## Activity
 
@@ -39,7 +52,6 @@ Bump::adjust('orders', identifiable: $order->user, amount: -25.00, note: 'partia
 
 - `APP_ENV=production` sends with `BUMP_LIVE_TOKEN`, every other environment with `BUMP_TEST_TOKEN`. Without the token for the current environment, calls are dropped.
 - Production `.env`: `BUMP_LIVE_TOKEN`. Local and staging `.env`: `BUMP_TEST_TOKEN`. Never put the live token in a non-production environment.
-- `BUMP_DELIVERY=queue` (default) needs a running queue worker. Use `sync` only for apps without one.
 
 ## Backfill
 
@@ -80,8 +92,9 @@ class OrdersBackfill implements Backfill
 
 ## Testing
 
-- In feature tests that track, call `Bump::fake()` first, then assert with `Bump::assertTracked()`, `assertTrackedTimes()`, `assertNotTracked()` or `assertNothingTracked()`. Callbacks get a `StickySoftware\Bump\Testing\TrackedEvent`.
-- Never hit the real Bump API from tests: fake it, and keep `BUMP_TEST_TOKEN` and `BUMP_LIVE_TOKEN` out of `phpunit.xml` and `.env.testing`.
+- In feature tests that track, call `Bump::fake()` first, then assert with `Bump::assertTracked()`, `assertTrackedTimes()`, `assertNotTracked()` or `assertNothingTracked()`. Callbacks get a `StickySoftware\Bump\Testing\TrackedEvent`. For `forget()`, use `Bump::assertForgotten()` and `assertNotForgotten()`.
+- Use `Bump::fake()`, never `Bump::shouldReceive()`.
+- `BUMP_ENABLED` is off by default under `APP_ENV=testing`, so tests never reach Bump. `<env name="BUMP_ENABLED" value="false"/>` in `phpunit.xml` is the explicit form.
 
 @boostsnippet('Fake Bump in a test', 'php')
 use StickySoftware\Bump\Facades\Bump;

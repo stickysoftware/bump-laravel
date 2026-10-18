@@ -2,6 +2,9 @@
 
 namespace StickySoftware\Bump;
 
+/**
+ * @internal
+ */
 final readonly class SendResult
 {
     /**

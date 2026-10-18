@@ -3,16 +3,17 @@
 namespace StickySoftware\Bump;
 
 use DateTimeInterface;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 use Throwable;
 
 /**
- * Holds no state of its own: the buffer is resolved on every call, so the instance the facade caches
- * stays correct across Octane requests and queued jobs.
+ * Keep this stateless: the facade caches one instance across Octane requests and queued jobs.
  */
-final class Bump
+final class Tracker
 {
     private static bool $reportedMissingToken = false;
 
@@ -28,13 +29,12 @@ final class Bump
         ?DateTimeInterface $occurredAt = null,
         ?string $note = null,
         ?bool $activity = null,
+        ?string $id = null,
     ): void {
-        $this->record($trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity ?? $this->defaultActivity());
+        $this->record($trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity ?? $this->defaultActivity(), $id);
     }
 
     /**
-     * A correction: counts nothing and isn't activity unless the call says so.
-     *
      * @param  int|list<int>|null  $count
      * @param  int|float|string|list<int|float|string>|null  $amount
      */
@@ -46,12 +46,13 @@ final class Bump
         ?DateTimeInterface $occurredAt = null,
         ?string $note = null,
         ?bool $activity = false,
+        ?string $id = null,
     ): void {
-        $this->record($trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity);
+        $this->record($trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity, $id);
     }
 
     /**
-     * Sends everything recorded so far. Runs by itself at the end of every request, command and job.
+     * Runs by itself when a request, command or job ends. Call it in long-running loops.
      */
     public function flush(): void
     {
@@ -67,6 +68,28 @@ final class Bump
     }
 
     /**
+     * Never log the handle: it's what is being erased.
+     */
+    public function forget(Model|string|int $identifiable): void
+    {
+        try {
+            if (! $this->enabled()) {
+                return;
+            }
+
+            $handle = $identifiable instanceof Model ? Identifiables::handle($identifiable) : (string) $identifiable;
+
+            if ($handle === '') {
+                throw new InvalidArgumentException('An empty handle names no identifiable.');
+            }
+
+            app(Delivery::class)->forget(app(Buffer::class)->pull(), $handle);
+        } catch (Throwable $e) {
+            Log::warning('Bump could not forget an identifiable.', ['exception' => $e->getMessage()]);
+        }
+    }
+
+    /**
      * @param  int|list<int>|null  $count
      * @param  int|float|string|list<int|float|string>|null  $amount
      */
@@ -78,14 +101,18 @@ final class Bump
         ?DateTimeInterface $occurredAt,
         ?string $note,
         ?bool $activity,
+        ?string $id,
     ): void {
         try {
             if (! $this->enabled()) {
                 return;
             }
 
+            EventRules::check($id, $count, $amount);
+
+            // A count or amount list keeps the id as given: the API derives "{id}:0", "{id}:1" per value.
             $event = array_filter([
-                'id' => (string) Str::uuid(),
+                'id' => $id ?? (string) Str::uuid(),
                 'trackable' => $trackable,
                 'identifiable' => Identifiables::normalize($identifiable),
                 'count' => $count,
@@ -147,7 +174,9 @@ final class Bump
         if (! self::$reportedMissingToken) {
             self::$reportedMissingToken = true;
 
-            Log::debug('Bump is off: '.$api->tokenVariable().' is not set.');
+            $message = 'Bump is off: '.$api->tokenVariable().' is not set.';
+
+            app()->isProduction() ? Log::warning($message) : Log::debug($message);
         }
 
         return false;
@@ -159,7 +188,7 @@ final class Bump
     }
 
     /**
-     * The missing-token log line is once per process; tests need it back.
+     * Tests reset the once-per-process log line.
      *
      * @internal
      */

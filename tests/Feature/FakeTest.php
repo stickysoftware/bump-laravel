@@ -14,6 +14,7 @@ use StickySoftware\Bump\Testing\TrackedEvent;
 use StickySoftware\Bump\Tests\Fixtures\Shop;
 use StickySoftware\Bump\Tests\Fixtures\Team;
 use StickySoftware\Bump\Tests\Fixtures\User;
+use StickySoftware\Bump\Tracker;
 
 afterEach(function () {
     Relation::morphMap([], merge: false);
@@ -25,7 +26,7 @@ describe('recording', function () {
 
         expect($fake)->toBeInstanceOf(BumpFake::class)
             ->and(Bump::getFacadeRoot())->toBe($fake)
-            ->and(app(StickySoftware\Bump\Bump::class))->toBe($fake)
+            ->and(app(Tracker::class))->toBe($fake)
             ->and(Bump::isFake())->toBeTrue();
     });
 
@@ -127,6 +128,44 @@ describe('recording', function () {
         expect($event->adjustment)->toBeTrue()
             ->and($event->count)->toBe(-1)
             ->and($event->activity)->toBeTrue();
+    });
+
+    it('records the id the call gives, and null when the package makes one up', function () {
+        Bump::fake();
+
+        Bump::track('orders', id: 'order-1042');
+        Bump::adjust('orders', amount: -5, id: 'refund-77');
+        Bump::track('orders');
+
+        expect(Bump::tracked('orders')->pluck('id')->all())->toBe(['order-1042', 'refund-77', null]);
+    });
+
+    it('drops a call with an id real delivery would drop, and says why', function (string $id, string $reason) {
+        Log::spy();
+        Bump::fake();
+
+        Bump::track('orders', id: $id);
+
+        expect(fn () => Bump::assertTracked('orders'))->toThrow(
+            ExpectationFailedException::class,
+            "Expected [orders] to be tracked, but it was not.\n\nBump dropped 1 call to [orders]:\n- {$reason}",
+        );
+        Log::shouldHaveReceived('warning')->once()->with('Bump dropped an event it could not record.', ['trackable' => 'orders', 'exception' => $reason]);
+    })->with([
+        'empty' => ['', 'The event id is empty.'],
+        'too long' => [str_repeat('a', 65), 'The event id is 65 characters, Bump takes at most 64.'],
+    ]);
+
+    it('drops a call whose count and amount are both lists', function () {
+        Log::spy();
+        Bump::fake();
+
+        Bump::track('orders', count: [1, 2], amount: [10, 20]);
+
+        expect(fn () => Bump::assertTracked('orders'))->toThrow(
+            ExpectationFailedException::class,
+            "Bump dropped 1 call to [orders]:\n- count and amount can't both be lists.",
+        );
     });
 
     it('drops a call with more than 100 values, like real delivery', function () {
@@ -355,6 +394,73 @@ describe('assertNothingTracked', function () {
 
         expect(fn () => Bump::assertNothingTracked())
             ->toThrow(ExpectationFailedException::class, "Expected nothing to be tracked, but these were:\n\n- [orders] 2 times\n- [members] 1 time");
+    });
+});
+
+describe('forget', function () {
+    it('records forgotten handles, resolving models the way real delivery does', function () {
+        Bump::fake();
+        $user = new User(['id' => 12, 'prefixed_id' => 'usr_3f9a']);
+
+        Bump::forget($user);
+        Bump::forget('team_8');
+        Bump::forget(42);
+
+        Bump::assertForgotten($user);
+        Bump::assertForgotten('usr_3f9a');
+        Bump::assertForgotten('team_8');
+        Bump::assertForgotten(42);
+        Bump::assertNotForgotten('usr_other');
+        expect(Bump::forgotten()->all())->toBe(['usr_3f9a', 'team_8', '42']);
+    });
+
+    it('records without a token and when turned off', function () {
+        config(['bump.test_token' => null, 'bump.enabled' => false]);
+        Bump::fake();
+
+        Bump::forget('usr_1');
+
+        Bump::assertForgotten('usr_1');
+    });
+
+    it('fails assertForgotten with the handle', function () {
+        Bump::fake();
+
+        expect(fn () => Bump::assertForgotten(new User(['id' => 12, 'prefixed_id' => 'usr_3f9a'])))
+            ->toThrow(ExpectationFailedException::class, 'Expected [usr_3f9a] to be forgotten, but it was not.');
+    });
+
+    it('fails assertNotForgotten with the handle', function () {
+        Bump::fake();
+
+        Bump::forget('usr_1');
+
+        expect(fn () => Bump::assertNotForgotten('usr_1'))
+            ->toThrow(ExpectationFailedException::class, 'Expected [usr_1] not to be forgotten, but it was.');
+    });
+
+    it('drops a forget real delivery would drop, and says why when the assertion fails', function () {
+        Log::spy();
+        Bump::fake();
+
+        Bump::forget(new User);
+
+        expect(fn () => Bump::assertForgotten('user_1'))->toThrow(
+            ExpectationFailedException::class,
+            "Expected [user_1] to be forgotten, but it was not.\n\nBump dropped 1 call to forget():\n- An unsaved ".User::class.' has no key to build a Bump handle from.',
+        );
+        Log::shouldHaveReceived('warning')->once()->withArgs(fn (string $message) => $message === 'Bump could not forget an identifiable.');
+    });
+
+    it('sends and queues nothing', function () {
+        Queue::fake();
+        Bump::fake();
+
+        Bump::track('orders');
+        Bump::forget('usr_1');
+
+        Http::assertNothingSent();
+        Queue::assertNothingPushed();
     });
 });
 

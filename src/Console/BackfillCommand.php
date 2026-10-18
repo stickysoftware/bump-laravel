@@ -17,6 +17,9 @@ use StickySoftware\Bump\Identifiables;
 use StickySoftware\Bump\SendOutcome;
 use Symfony\Component\Console\Attribute\AsCommand;
 
+/**
+ * @internal
+ */
 #[AsCommand(name: 'bump:backfill')]
 class BackfillCommand extends Command
 {
@@ -90,7 +93,6 @@ class BackfillCommand extends Command
         }
 
         foreach ($classes as $class) {
-            // A class fails only when Bump didn't take a batch, which the next class would hit too.
             if (! $this->backfill($class, $window, $delivery)) {
                 $this->components->error("Stopped at {$class}. Run the same command again to carry on.");
 
@@ -322,8 +324,7 @@ class BackfillCommand extends Command
             return 'occurred_at is required for a backfill.';
         }
 
-        // Catches a class that forgot to constrain its query: an event from after `until` was
-        // already counted live.
+        // Catches a class that forgot constrain(): events after `until` were already counted live.
         $occurredAt = $this->time($occurredAt);
 
         if ($occurredAt !== null && ($occurredAt >= $window->until || ($window->since !== null && $occurredAt < $window->since))) {
@@ -363,7 +364,6 @@ class BackfillCommand extends Command
      */
     private function send(Delivery $delivery, array $batch): ?string
     {
-        // A backfill can wait out the whole rate-limit window: nobody is waiting on a page.
         $result = $delivery->sendNow($batch, backfill: true, attempts: 5, maxWait: 120);
 
         if ($result->outcome !== SendOutcome::Delivered) {

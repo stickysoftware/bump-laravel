@@ -7,13 +7,14 @@ use Illuminate\Database\Eloquent\Model;
 use StickySoftware\Bump\Identifiables;
 
 /**
- * One track() or adjust() call recorded by Bump::fake(), holding what real delivery would send.
- * Null means the call left the field out and Bump's server default applies (count 1, amount 0,
- * activity by the trackable's setting).
+ * One track() or adjust() call recorded by Bump::fake(). Null means the call left the field out and
+ * Bump's default applies: count 1, amount 0, activity by the trackable's setting, a generated id.
  */
 final readonly class TrackedEvent
 {
     /**
+     * @internal
+     *
      * @param  list<mixed>  $identifiables  handles as sent: a string, or a handle and label map
      * @param  int|list<int>|null  $count
      * @param  int|float|string|list<int|float|string>|null  $amount
@@ -27,11 +28,9 @@ final readonly class TrackedEvent
         public ?string $note,
         public ?bool $activity,
         public bool $adjustment,
+        public ?string $id = null,
     ) {}
 
-    /**
-     * Takes a model or a handle, and resolves a model the way real delivery does.
-     */
     public function hasIdentifiable(Model|string $identifiable): bool
     {
         $handle = $identifiable instanceof Model ? Identifiables::handle($identifiable) : $identifiable;

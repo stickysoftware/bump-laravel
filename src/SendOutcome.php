@@ -2,13 +2,16 @@
 
 namespace StickySoftware\Bump;
 
+/**
+ * @internal
+ */
 enum SendOutcome
 {
     case Delivered;
 
-    // Connection errors, 5xx and 429: the same batch can go again, its event ids make the repeat safe.
+    // Connection errors, 5xx and 429. The event ids make a resend safe.
     case Retry;
 
-    // 400, 401, 403 and anything else the API refuses: sending again changes nothing.
+    // Anything else the API refuses: sending again changes nothing.
     case Failed;
 }

@@ -26,7 +26,7 @@ it('shows the settings and that the token is set', function () {
         'environment_token' => 'BUMP_TEST_TOKEN set',
         'delivery' => 'queue',
         'handles' => 'prefixed_id',
-        'api_url' => 'https://api.bump.example/v1',
+        'api_url' => 'https://api.bump.example',
     ]);
 });
 

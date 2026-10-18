@@ -83,6 +83,54 @@ it('gives every event its own id', function () {
     expect(sentEvents()[0]['id'])->not->toBe(sentEvents()[1]['id']);
 });
 
+describe('ids', function () {
+    it('sends the id the call gives', function () {
+        Bump::track('orders', id: 'order-1042');
+        Bump::adjust('orders', amount: -25, id: 'refund-77');
+        Bump::flush();
+
+        expect(array_column(sentEvents(), 'id'))->toBe(['order-1042', 'refund-77']);
+    });
+
+    it('sends the id unchanged with a count or amount list', function () {
+        Bump::track('orders', count: [1, 2], id: 'cart-77');
+        Bump::track('orders', amount: [10, 25.5], id: 'cart-78');
+        Bump::flush();
+
+        expect(array_column(sentEvents(), 'id'))->toBe(['cart-77', 'cart-78']);
+    });
+
+    it('drops the event with a warning for an empty id or one over 64 characters', function (string $id, string $reason) {
+        Log::spy();
+
+        Bump::track('orders', id: $id);
+        Bump::track('orders', id: str_repeat('a', 64));
+        Bump::flush();
+
+        expect(array_column(sentEvents(), 'id'))->toBe([str_repeat('a', 64)]);
+        Log::shouldHaveReceived('warning')->once()->with('Bump dropped an event it could not record.', [
+            'trackable' => 'orders',
+            'exception' => $reason,
+        ]);
+    })->with([
+        'empty' => ['', 'The event id is empty.'],
+        'too long' => [str_repeat('a', 65), 'The event id is 65 characters, Bump takes at most 64.'],
+    ]);
+});
+
+it('drops an event whose count and amount are both lists, which the API rejects', function () {
+    Log::spy();
+
+    Bump::track('orders', count: [1, 2], amount: [10, 20]);
+    Bump::flush();
+
+    Http::assertNothingSent();
+    Log::shouldHaveReceived('warning')->once()->with('Bump dropped an event it could not record.', [
+        'trackable' => 'orders',
+        'exception' => "count and amount can't both be lists.",
+    ]);
+});
+
 it('takes the time when the call happens, not when the buffer is sent', function () {
     Carbon::setTestNow('2026-10-15 12:00:00');
     Bump::track('orders');

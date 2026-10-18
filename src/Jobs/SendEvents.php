@@ -7,15 +7,19 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Jobs\SyncJob;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use StickySoftware\Bump\Api;
 use StickySoftware\Bump\Delivery;
 use StickySoftware\Bump\SendOutcome;
 use Throwable;
 
 /**
- * Retries are released by the job itself rather than thrown, so a Bump outage never shows up in the
- * app's failed jobs or exception tracker. The token is read when the job runs and never stored in
- * the queue payload.
+ * Releases instead of throwing, so a Bump outage stays out of the app's failed jobs. Never store the
+ * token on the job: it would end up in the queue payload.
+ *
+ * Keep the class name and $events: both are serialized into queued payloads.
+ *
+ * @internal
  */
 class SendEvents implements ShouldQueue
 {
@@ -68,11 +72,22 @@ class SendEvents implements ShouldQueue
     public function failed(?Throwable $exception): void
     {
         $this->gaveUp($exception?->getMessage() ?? 'The job failed.');
+
+        // A failed job ends its chain, but a chained forget must still run.
+        try {
+            $this->dispatchNextJobInChain();
+        } catch (Throwable $e) {
+            Log::error('Bump could not queue a forget request. The identifiable is not forgotten.', [
+                'exception' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function gaveUp(string $reason): void
     {
-        Log::error('Bump gave up on '.count($this->events).' events after '.$this->attempts().' attempts.', [
+        $attempts = $this->attempts();
+
+        Log::error('Bump gave up on '.Api::events(count($this->events)).' after '.$attempts.' '.Str::plural('attempt', $attempts).'.', [
             'reason' => $reason,
         ]);
     }

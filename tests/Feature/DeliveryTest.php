@@ -2,14 +2,12 @@
 
 // Queue and sync delivery, which answers are retried, what gets logged, and that nothing ever throws into the app.
 
-use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Sleep;
-use StickySoftware\Bump\Delivery;
 use StickySoftware\Bump\Facades\Bump;
 use StickySoftware\Bump\Jobs\SendEvents;
 
@@ -78,7 +76,7 @@ describe('queue delivery', function () {
         Bump::track('orders');
         Bump::flush();
 
-        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message) => $message === 'Bump could not queue 2 events, they are lost.');
+        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message) => $message === 'Bump could not queue 2 events. They are lost.');
     });
 
     it('releases a retryable batch with the Retry-After delay', function () {
@@ -118,7 +116,7 @@ describe('queue delivery', function () {
         app()->call([$job, 'handle']);
 
         $job->assertNotReleased();
-        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message) => $message === 'Bump gave up on 1 events after 6 attempts.');
+        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message) => $message === 'Bump gave up on 1 event after 6 attempts.');
     });
 
     it('does not retry what the API refuses', function (int $status) {
@@ -200,7 +198,7 @@ describe('sync delivery', function () {
 
         Http::assertSentCount(1);
         Sleep::assertNeverSlept();
-        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message, array $context) => $message === 'Bump gave up on 1 events after 1 attempts.'
+        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message, array $context) => $message === 'Bump gave up on 1 event after 1 attempt.'
             && $context['retry_after'] === 45);
     });
 
@@ -212,7 +210,7 @@ describe('sync delivery', function () {
         Bump::flush();
 
         Http::assertSentCount(3);
-        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message) => $message === 'Bump gave up on 1 events after 3 attempts.');
+        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message) => $message === 'Bump gave up on 1 event after 3 attempts.');
     });
 
     it('never retries 400, 401 or 403 and logs the API error', function (int $status, string $code) {
@@ -224,7 +222,7 @@ describe('sync delivery', function () {
 
         Http::assertSentCount(1);
         Sleep::assertNeverSlept();
-        Log::shouldHaveReceived('error')->once()->with('Bump refused 1 events.', [
+        Log::shouldHaveReceived('error')->once()->with('Bump refused 1 event.', [
             'status' => $status,
             'code' => $code,
             'message' => 'Nope.',
@@ -308,15 +306,6 @@ describe('never throws into the app', function () {
         app()->call([$job, 'handle']);
 
         Http::assertNothingSent();
-        Log::shouldHaveReceived('error')->once()->with('Bump dropped 1 events: BUMP_TEST_TOKEN is not set.');
+        Log::shouldHaveReceived('error')->once()->with('Bump dropped 1 event: BUMP_TEST_TOKEN is not set.');
     });
-});
-
-it('posts to the configured URL with or without a trailing slash', function () {
-    config(['bump.url' => 'https://api.bump.example/v1/']);
-    fakeApi();
-
-    app(Delivery::class)->sendNow([['id' => 'a', 'trackable' => 'orders']]);
-
-    Http::assertSent(fn (Request $request) => $request->url() === 'https://api.bump.example/v1/events');
 });

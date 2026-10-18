@@ -2,7 +2,7 @@
 
 namespace {{ namespace }};
 
-use App\Models\Model;
+use {{ rootNamespace }}Models\Model;
 use StickySoftware\Bump\Backfill\BackfillWindow;
 use StickySoftware\Bump\Contracts\Backfill;
 

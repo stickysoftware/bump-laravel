@@ -3,9 +3,10 @@
 namespace StickySoftware\Bump;
 
 /**
- * Where a call happens decides its activity default: a person acts in a web request, the system acts
- * in queued jobs and console commands. A job is tracked by its own events instead of by the console
- * check, so a job run by the sync queue inside a web request still counts as a job.
+ * Jobs are counted through queue events, not runningInConsole(), so a job the sync queue runs inside
+ * a web request still counts as a job.
+ *
+ * @internal
  */
 final class Context
 {

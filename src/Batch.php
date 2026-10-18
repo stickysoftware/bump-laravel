@@ -2,13 +2,15 @@
 
 namespace StickySoftware\Bump;
 
+/**
+ * @internal
+ */
 final class Batch
 {
     public const MAX_EVENTS = 100;
 
     /**
-     * How many events the API counts for this one: a count or amount list expands into one event per
-     * value, and the 100-per-request limit counts after expansion.
+     * The API counts each value of a count or amount list as one event, also toward the 100 per request.
      *
      * @param  array<string, mixed>  $event
      */

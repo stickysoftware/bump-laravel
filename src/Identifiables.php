@@ -8,6 +8,9 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
+/**
+ * @internal
+ */
 final class Identifiables
 {
     public const MAX_HANDLE_LENGTH = 64;
@@ -20,10 +23,6 @@ final class Identifiables
     /** @var array<class-string, true> */
     private static array $reportedFallbacks = [];
 
-    /**
-     * Models become handles. Strings, integers and maps pass through untouched, so every shape the API
-     * accepts still works.
-     */
     public static function normalize(mixed $identifiable): mixed
     {
         if ($identifiable instanceof Model) {
@@ -41,8 +40,6 @@ final class Identifiables
     }
 
     /**
-     * Labels are opt-in: a model only sends one when it defines bumpLabel().
-     *
      * @return string|array{handle: string, label: string}
      */
     public static function fromModel(Model $model): string|array
@@ -57,9 +54,6 @@ final class Identifiables
         return ['handle' => $handle, 'label' => (string) $label];
     }
 
-    /**
-     * The API rejects an over-long handle anyway; throwing here drops the event before it is sent.
-     */
     public static function handle(Model $model): string
     {
         $handle = method_exists($model, 'bumpHandle')
@@ -79,8 +73,8 @@ final class Identifiables
     }
 
     /**
-     * Reads raw attributes, never the accessor, so a model without spatie/laravel-prefixed-ids never errors,
-     * not even under Model::preventAccessingMissingAttributes().
+     * Raw attributes, never the accessor: a model without the trait must not error, even under
+     * Model::preventAccessingMissingAttributes().
      */
     private static function prefixedId(Model $model): ?string
     {
@@ -93,9 +87,8 @@ final class Identifiables
         $attributes = $model->getAttributes();
         $usesTrait = in_array(self::SPATIE_TRAIT, class_uses_recursive($model), true);
 
-        // A model loaded with select('id') would otherwise fall back to user_12 and split its totals from
-        // the same model sent elsewhere as usr_…. Without scopes, so soft deletes and tenancy don't hide it.
-        // toBase() returns the raw column: Eloquent's value() would go through the model's accessors.
+        // A model loaded with select('id') would fall back to user_12 and split its totals. No scopes, so
+        // soft-deleted rows resolve; toBase() skips the model's accessors.
         if ($usesTrait && $model->exists && ! array_key_exists($attribute, $attributes)) {
             $attributes[$attribute] = $model->newQueryWithoutScopes()->whereKey($model->getKey())->toBase()->value($attribute);
 
@@ -156,7 +149,7 @@ final class Identifiables
     }
 
     /**
-     * The warnings are once per process; tests need them back.
+     * Tests reset the once-per-process warnings.
      *
      * @internal
      */

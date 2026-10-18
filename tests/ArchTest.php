@@ -7,7 +7,7 @@ arch('src has no debugging leftovers')
     ->not->toBeUsed()
     ->ignoring('StickySoftware\Bump\Tests');
 
-arch('classes are final, except the provider, facade, command and job')
+arch('classes are final, except the provider, facade, command and jobs')
     ->expect('StickySoftware\Bump')
     ->classes()
     ->toBeFinal()
@@ -15,6 +15,7 @@ arch('classes are final, except the provider, facade, command and job')
         'StickySoftware\Bump\BumpServiceProvider',
         'StickySoftware\Bump\Console\BackfillCommand',
         'StickySoftware\Bump\Facades\Bump',
+        'StickySoftware\Bump\Jobs\ForgetIdentifiable',
         'StickySoftware\Bump\Jobs\SendEvents',
         'StickySoftware\Bump\Tests',
     ]);

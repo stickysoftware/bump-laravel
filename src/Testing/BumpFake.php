@@ -4,19 +4,22 @@ namespace StickySoftware\Bump\Testing;
 
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\Testing\Fakes\Fake;
+use InvalidArgumentException;
 use PHPUnit\Framework\Assert as PHPUnit;
 use StickySoftware\Bump\Batch;
+use StickySoftware\Bump\EventRules;
 use StickySoftware\Bump\Identifiables;
 use Throwable;
 
 /**
- * Records calls whether or not a token is set or BUMP_ENABLED is on, so an app's tests don't need
- * either. A call real delivery would drop is dropped here too, with the same warning.
+ * Records with or without a token or BUMP_ENABLED. A call real delivery would drop is dropped here
+ * too, with the same warning.
  */
 final class BumpFake implements Fake
 {
@@ -25,6 +28,12 @@ final class BumpFake implements Fake
 
     /** @var array<string, list<string>> trackable => why its calls were dropped */
     private array $dropped = [];
+
+    /** @var list<string> */
+    private array $forgotten = [];
+
+    /** @var list<string> */
+    private array $droppedForgets = [];
 
     /**
      * @param  int|list<int>|null  $count
@@ -38,8 +47,9 @@ final class BumpFake implements Fake
         ?DateTimeInterface $occurredAt = null,
         ?string $note = null,
         ?bool $activity = null,
+        ?string $id = null,
     ): void {
-        $this->record(false, $trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity);
+        $this->record(false, $trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity, $id);
     }
 
     /**
@@ -54,15 +64,55 @@ final class BumpFake implements Fake
         ?DateTimeInterface $occurredAt = null,
         ?string $note = null,
         ?bool $activity = false,
+        ?string $id = null,
     ): void {
-        $this->record(true, $trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity);
+        $this->record(true, $trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity, $id);
+    }
+
+    public function flush(): void {}
+
+    public function forget(Model|string|int $identifiable): void
+    {
+        try {
+            $handle = $this->handle($identifiable);
+
+            if ($handle === '') {
+                throw new InvalidArgumentException('An empty handle names no identifiable.');
+            }
+
+            $this->forgotten[] = $handle;
+        } catch (Throwable $e) {
+            Log::warning('Bump could not forget an identifiable.', ['exception' => $e->getMessage()]);
+
+            $this->droppedForgets[] = $e->getMessage();
+        }
+    }
+
+    public function assertForgotten(Model|string|int $identifiable): void
+    {
+        $handle = $this->handle($identifiable);
+
+        PHPUnit::assertContains(
+            $handle,
+            $this->forgotten,
+            "Expected [{$handle}] to be forgotten, but it was not.".$this->droppedForgetsNote(),
+        );
+    }
+
+    public function assertNotForgotten(Model|string|int $identifiable): void
+    {
+        $handle = $this->handle($identifiable);
+
+        PHPUnit::assertNotContains($handle, $this->forgotten, "Expected [{$handle}] not to be forgotten, but it was.");
     }
 
     /**
-     * The service provider calls this when a request, command or job ends. There is nothing to send,
-     * and the recorded calls stay for the assertions.
+     * @return Collection<int, string> handles, in the order forget() was called
      */
-    public function flush(): void {}
+    public function forgotten(): Collection
+    {
+        return collect($this->forgotten);
+    }
 
     /**
      * @param  (callable(TrackedEvent): bool)|null  $callback
@@ -146,8 +196,11 @@ final class BumpFake implements Fake
         ?DateTimeInterface $occurredAt,
         ?string $note,
         ?bool $activity,
+        ?string $id,
     ): void {
         try {
+            EventRules::check($id, $count, $amount);
+
             $identifiables = Identifiables::normalize($identifiable);
             $size = Batch::size(['count' => $count, 'amount' => $amount]);
 
@@ -173,6 +226,7 @@ final class BumpFake implements Fake
                 note: $note,
                 activity: $activity,
                 adjustment: $adjustment,
+                id: $id,
             );
         } catch (Throwable $e) {
             Log::warning('Bump dropped an event it could not record.', [
@@ -184,9 +238,6 @@ final class BumpFake implements Fake
         }
     }
 
-    /**
-     * A handle mistake drops the call, so the failure says why instead of only that it's missing.
-     */
     private function droppedNote(string $trackable): string
     {
         $reasons = $this->dropped[$trackable] ?? [];
@@ -202,6 +253,25 @@ final class BumpFake implements Fake
             $trackable,
             implode("\n- ", array_unique($reasons)),
         );
+    }
+
+    private function droppedForgetsNote(): string
+    {
+        if ($this->droppedForgets === []) {
+            return '';
+        }
+
+        return sprintf(
+            "\n\nBump dropped %d %s to forget():\n- %s",
+            count($this->droppedForgets),
+            Str::plural('call', count($this->droppedForgets)),
+            implode("\n- ", array_unique($this->droppedForgets)),
+        );
+    }
+
+    private function handle(Model|string|int $identifiable): string
+    {
+        return $identifiable instanceof Model ? Identifiables::handle($identifiable) : (string) $identifiable;
     }
 
     private function times(int $count): string

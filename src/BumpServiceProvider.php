@@ -19,7 +19,7 @@ class BumpServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/bump.php', 'bump');
 
-        $this->app->singleton(Bump::class);
+        $this->app->singleton(Tracker::class);
         $this->app->singleton(Context::class);
         $this->app->scoped(Buffer::class);
     }
@@ -43,11 +43,11 @@ class BumpServiceProvider extends ServiceProvider
             ]);
         }
 
-        // Resolved through app() at call time, not $this->app: Octane runs each request in a clone.
-        $this->app->terminating(fn () => app(Bump::class)->flush());
+        // app(), not $this->app: Octane handles each request in a clone of the app.
+        $this->app->terminating(fn () => app(Tracker::class)->flush());
 
         $events->listen(JobProcessing::class, fn () => app(Context::class)->jobStarted());
-        $events->listen([JobProcessed::class, JobFailed::class], fn () => app(Bump::class)->flush());
+        $events->listen([JobProcessed::class, JobFailed::class], fn () => app(Tracker::class)->flush());
         $events->listen(JobAttempted::class, function () {
             app(Context::class)->jobEnded();
 
@@ -56,15 +56,15 @@ class BumpServiceProvider extends ServiceProvider
     }
 
     /**
-     * An attempt that threw and goes back on the queue fires neither JobProcessed nor JobFailed. Its
-     * events stay unsent: the next attempt records them again, and sending both would count twice.
+     * A retried attempt fires neither JobProcessed nor JobFailed. Its events are dropped: the next
+     * attempt records them again, and sending both would count twice.
      */
     private function dropEventsOfRetriedAttempt(): void
     {
         $dropped = count(app(Buffer::class)->pull());
 
         if ($dropped > 0) {
-            Log::warning("Bump dropped {$dropped} events from a job attempt that failed and will run again.");
+            Log::warning('Bump dropped '.Api::events($dropped).' from a job attempt that failed and will run again.');
         }
     }
 }

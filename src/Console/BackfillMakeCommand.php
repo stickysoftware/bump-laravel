@@ -6,6 +6,9 @@ use Illuminate\Console\GeneratorCommand;
 use Illuminate\Support\Str;
 use Symfony\Component\Console\Attribute\AsCommand;
 
+/**
+ * @internal
+ */
 #[AsCommand(name: 'make:bump-backfill')]
 final class BackfillMakeCommand extends GeneratorCommand
 {
@@ -35,7 +38,7 @@ final class BackfillMakeCommand extends GeneratorCommand
     }
 
     /**
-     * OrdersBackfill gives "orders": the start of every event id, and the trackable.
+     * OrdersBackfill becomes "orders".
      */
     private function prefix(string $name): string
     {

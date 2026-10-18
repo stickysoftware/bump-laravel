@@ -3,8 +3,7 @@
 namespace StickySoftware\Bump;
 
 /**
- * Events recorded during one request, command or job. Bound as a scoped instance, so every Octane
- * request and every queued job starts with an empty one.
+ * @internal
  */
 final class Buffer
 {
