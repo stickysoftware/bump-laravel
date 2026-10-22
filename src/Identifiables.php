@@ -54,6 +54,24 @@ final class Identifiables
         return ['handle' => $handle, 'label' => (string) $label];
     }
 
+    /**
+     * @throws InvalidArgumentException when the handle names no identifiable Bump could match
+     */
+    public static function handleToForget(Model|string|int $identifiable): string
+    {
+        $handle = $identifiable instanceof Model ? self::handle($identifiable) : (string) $identifiable;
+
+        if ($handle === '') {
+            throw new InvalidArgumentException('An empty handle names no identifiable.');
+        }
+
+        if (! mb_check_encoding($handle, 'UTF-8')) {
+            throw new InvalidArgumentException("The handle isn't valid UTF-8.");
+        }
+
+        return $handle;
+    }
+
     public static function handle(Model $model): string
     {
         $handle = method_exists($model, 'bumpHandle')
@@ -107,8 +125,8 @@ final class Identifiables
             self::$reportedFallbacks[$model::class] = true;
 
             Log::warning(sprintf(
-                'Bump fell back to %s style handles for %s: some rows have no %s.',
-                self::keyHandle($model),
+                'Bump fell back to %s_{key} handles for %s: some rows have no %s.',
+                self::type($model),
                 $model::class,
                 $attribute,
             ));
@@ -125,10 +143,14 @@ final class Identifiables
             throw new InvalidArgumentException('An unsaved '.$model::class.' has no key to build a Bump handle from.');
         }
 
-        $alias = Relation::getMorphAlias($model::class);
-        $type = $alias === $model::class ? Str::snake(class_basename($model)) : $alias;
+        return self::type($model).'_'.$key;
+    }
 
-        return $type.'_'.$key;
+    private static function type(Model $model): int|string
+    {
+        $alias = Relation::getMorphAlias($model::class);
+
+        return $alias === $model::class ? Str::snake(class_basename($model)) : $alias;
     }
 
     private static function mode(): string

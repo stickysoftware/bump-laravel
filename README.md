@@ -23,6 +23,8 @@ BUMP_TEST_TOKEN=bump_test_…   # local, staging, CI
 
 Events go out from a queued job by default, so the app needs a running queue worker. Without one, set `BUMP_DELIVERY=sync`, see [When events are sent](#when-events-are-sent).
 
+`BUMP_URL` has to use https. Plain http works only for localhost, 127.0.0.1, ::1 and hosts ending in `.test` or `.localhost`; with any other plain http URL the package sends nothing and logs one error per process.
+
 The service provider and the `Bump` facade register themselves. To change config beyond the env vars below, publish it:
 
 ```bash
@@ -43,7 +45,7 @@ The live token is used only when `APP_ENV` is exactly `production`. Without the 
 |---|---|---|
 | `BUMP_LIVE_TOKEN` | | Used when `APP_ENV=production` |
 | `BUMP_TEST_TOKEN` | | Used in every other environment |
-| `BUMP_URL` | `https://api.bumpbunny.dev` | The host only, the package adds `/v1` |
+| `BUMP_URL` | `https://api.bumpbunny.dev` | The host only, the package adds `/v1`. https, or plain http on localhost, 127.0.0.1, ::1, `*.test` and `*.localhost` |
 | `BUMP_DELIVERY` | `queue` | `queue` or `sync` |
 | `BUMP_SYNC_TIMEOUT` | `5` | Seconds, `sync` only |
 | `BUMP_HANDLES` | `prefixed_id` | `prefixed_id` or `key`, see [Identifiables](#identifiables) |
@@ -160,7 +162,7 @@ while ($message = $consumer->next()) {
 }
 ```
 
-With `BUMP_DELIVERY=queue` the buffer goes out as a queued job. With `sync` the HTTP request happens while the request or command terminates, limited to `BUMP_SYNC_TIMEOUT` seconds per attempt. With retries, the worst case is about 21 seconds, up to 35 when Bump is rate limiting. An answer that takes at least half the timeout logs a warning with the measured time (`Bump took 3.4s to answer (sync timeout 5s).`). If those lines show up, raise the timeout or switch to `queue`.
+With `BUMP_DELIVERY=queue` the buffer goes out as a queued job. Queued payloads are encrypted with `APP_KEY`, so when you rotate it, keep the old key in `APP_PREVIOUS_KEYS` until the queue is empty. With `sync` the HTTP request happens while the request or command terminates, limited to `BUMP_SYNC_TIMEOUT` seconds per attempt. With retries, the worst case is about 21 seconds, up to 35 when Bump is rate limiting. An answer that takes at least half the timeout logs a warning with the measured time (`Bump took 3.4s to answer (sync timeout 5s).`). If those lines show up, raise the timeout or switch to `queue`.
 
 Under Octane, use `queue`: sync delivery holds the worker until Bump answers.
 
@@ -168,12 +170,14 @@ Under Octane, use `queue`: sync delivery holds the worker until Bump answers.
 
 The package never throws into your app. It logs instead:
 
-- `error` when Bump refuses a batch (400, 401, 403) with the API's error code and message, when a batch can't be queued, and when retries run out
+- `error` when Bump refuses a batch (400, 401, 403) with the API's error code and message, when `BUMP_URL` answers with a redirect (never followed), when a batch can't be queued, and when retries run out
 - `warning` for each event Bump rejects, with the field and the reason
-- `warning` for a call the package drops itself: an unsaved model, a handle or id that's too long, two lists
+- `warning` for a call the package drops itself: an unsaved model, a handle or id that's too long, two lists, text that isn't valid UTF-8
 - `warning` when a job attempt fails and goes back on the queue: its events are dropped, because the next attempt records them again
 
-Connection errors, 5xx and 429 are retried, waiting for `Retry-After` when Bump sends one. Queued batches retry 5 times over about half an hour; sync delivery retries twice and waits at most 10 seconds at a time. Every event carries an id, so a retried batch never counts twice.
+Connection errors, 5xx and 429 are retried, waiting for `Retry-After` when Bump sends one, up to 15 minutes. Queued batches retry 5 times over about half an hour; sync delivery retries twice and waits at most 10 seconds at a time. Every event carries an id, so a retried batch never counts twice.
+
+A job of your own that already sent some events (at 100 events, an explicit `flush()`, or a job the sync queue ran inside it) and then fails sends those again on its retry under new ids, so they count twice unless the calls pass `id:`.
 
 A wrong argument type is still a PHP `TypeError` at the call, like with any other function. `Bump::track(['orders'])` throws.
 

@@ -13,9 +13,11 @@ use StickySoftware\Bump\Backfill\BackfillWindow;
 use StickySoftware\Bump\Batch;
 use StickySoftware\Bump\Contracts\Backfill;
 use StickySoftware\Bump\Delivery;
+use StickySoftware\Bump\EventRules;
 use StickySoftware\Bump\Identifiables;
 use StickySoftware\Bump\SendOutcome;
 use Symfony\Component\Console\Attribute\AsCommand;
+use Throwable;
 
 /**
  * @internal
@@ -68,6 +70,14 @@ class BackfillCommand extends Command
 
         if (! $dryRun && $api->token() === null) {
             $this->components->error($api->tokenVariable().' is not set.');
+
+            return self::FAILURE;
+        }
+
+        $refusal = $dryRun ? null : $api->urlRefusal();
+
+        if ($refusal !== null) {
+            $this->components->error($refusal);
 
             return self::FAILURE;
         }
@@ -335,6 +345,10 @@ class BackfillCommand extends Command
             $event['occurred_at'] = $event['occurred_at']->format(DateTimeInterface::ATOM);
         }
 
+        if (! EventRules::validUtf8($event)) {
+            return "The event has text that isn't valid UTF-8.";
+        }
+
         return $event;
     }
 
@@ -364,7 +378,11 @@ class BackfillCommand extends Command
      */
     private function send(Delivery $delivery, array $batch): ?string
     {
-        $result = $delivery->sendNow($batch, backfill: true, attempts: 5, maxWait: 120);
+        try {
+            $result = $delivery->sendNow($batch, backfill: true, attempts: 5, maxWait: 120);
+        } catch (Throwable $e) {
+            return "Bump couldn't send a batch: ".explode("\n", $e->getMessage())[0];
+        }
 
         if ($result->outcome !== SendOutcome::Delivered) {
             return "Bump didn't take a batch ({$result->reason}).";

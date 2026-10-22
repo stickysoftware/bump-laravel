@@ -2,7 +2,7 @@
 
 All notable changes to `stickysoftware/bump-laravel` are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## 1.0.0 - 2026-10-18
+## 1.0.0 - 2026-10-22
 
 First public release.
 
@@ -11,6 +11,11 @@ First public release.
 - `Bump::forget()` to erase an identifiable, after the events recorded so far.
 - Models become handles: `bumpHandle()`, their spatie/laravel-prefixed-ids ID, or type plus key. Labels from `bumpLabel()`.
 - Queue delivery (default) and sync delivery, with retries that honour `Retry-After`. The package never throws into the app.
+- `BUMP_URL` has to use https. Plain http works only for localhost, 127.0.0.1, ::1 and hosts ending in `.test` or `.localhost`.
+- Queued jobs are encrypted with `APP_KEY`.
+- Redirects are never followed: a `3xx` from `BUMP_URL` is a failed send.
+- An event with text that isn't valid UTF-8 is dropped with a warning, without taking the rest of its batch down.
+- A `Retry-After` from the API is honoured up to 15 minutes.
 - Activity left to the trackable's setting in web requests, `false` in jobs and commands.
 - `php artisan make:bump-backfill` and `php artisan bump:backfill` to import history up to when live counting started.
 - `Bump::fake()` with assertions for tracked and forgotten calls.

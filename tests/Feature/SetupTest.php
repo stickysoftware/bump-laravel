@@ -1,6 +1,6 @@
 <?php
 
-// What an app gets from the defaults: the API URL, BUMP_ENABLED under testing, missing-token logging, the User-Agent and the class behind the facade.
+// What an app gets from the defaults: the API URL and when plain http is refused, BUMP_ENABLED under testing, missing-token logging, the User-Agent and the class behind the facade.
 
 use Composer\InstalledVersions;
 use Illuminate\Http\Client\Request;
@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use StickySoftware\Bump\Delivery;
 use StickySoftware\Bump\Facades\Bump;
+use StickySoftware\Bump\Jobs\ForgetIdentifiable;
+use StickySoftware\Bump\Jobs\SendEvents;
 use StickySoftware\Bump\Tracker;
 
 /**
@@ -82,6 +84,75 @@ describe('API URL', function () {
         app(Delivery::class)->sendNow([['id' => 'a', 'trackable' => 'orders']]);
 
         Log::shouldNotHaveReceived('debug');
+    });
+});
+
+describe('BUMP_URL over plain http', function () {
+    it('sends to https anywhere and to plain http on local hosts', function (string $url) {
+        config(['bump.url' => $url]);
+        fakeApi();
+
+        app(Delivery::class)->sendNow([['id' => 'a', 'trackable' => 'orders']]);
+
+        Http::assertSentCount(1);
+    })->with([
+        'https' => 'https://api.bump.example',
+        'localhost' => 'http://localhost:8000',
+        '127.0.0.1' => 'http://127.0.0.1',
+        '::1' => 'http://[::1]:8000',
+        '.test' => 'http://bump.test',
+        '.localhost' => 'http://bump.localhost',
+        'uppercase' => 'HTTP://LOCALHOST',
+    ]);
+
+    it('sends nothing to any other host, logging that once per process', function (string $url) {
+        config(['bump.url' => $url, 'bump.delivery' => 'sync']);
+        Http::fake();
+        Log::spy();
+
+        Bump::track('orders');
+        Bump::flush();
+        Bump::track('orders');
+        Bump::forget('usr_1');
+
+        Http::assertNothingSent();
+        Log::shouldHaveReceived('error')->once()->with('Bump sends nothing: BUMP_URL has to use https, except for localhost, 127.0.0.1, ::1 and hosts ending in .test or .localhost.');
+    })->with([
+        'public host' => 'http://api.bumpbunny.dev',
+        'local-looking subdomain' => 'http://localhost.example.com',
+        'local-looking user info' => 'http://localhost@example.com',
+        '.test inside the host' => 'http://bump.test.example.com',
+        'bare test' => 'http://test',
+        'other loopback address' => 'http://127.0.0.2',
+        'no scheme' => 'api.bumpbunny.dev',
+        'empty' => '',
+    ]);
+
+    it('drops events in the queued job, before sending', function () {
+        config(['bump.url' => 'http://api.bump.example']);
+        Http::fake();
+        Log::spy();
+
+        $job = (new SendEvents([['id' => 'a', 'trackable' => 'orders']]))->withFakeQueueInteractions();
+        app()->call([$job, 'handle']);
+
+        Http::assertNothingSent();
+        $job->assertNotReleased();
+        $job->assertNotFailed();
+        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message) => str_starts_with($message, 'Bump sends nothing: BUMP_URL has to use https'));
+    });
+
+    it('drops a forget in the queued job, before sending', function () {
+        config(['bump.url' => 'http://api.bump.example']);
+        Http::fake();
+        Log::spy();
+
+        $job = (new ForgetIdentifiable('usr_1'))->withFakeQueueInteractions();
+        app()->call([$job, 'handle']);
+
+        Http::assertNothingSent();
+        $job->assertNotReleased();
+        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message) => str_starts_with($message, 'Bump sends nothing: BUMP_URL has to use https'));
     });
 });
 

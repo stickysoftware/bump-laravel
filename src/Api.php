@@ -3,6 +3,10 @@
 namespace StickySoftware\Bump;
 
 use Composer\InstalledVersions;
+use DateTimeImmutable;
+use DateTimeZone;
+use GuzzleHttp\Psr7\Exception\MalformedUriException;
+use GuzzleHttp\Psr7\Uri;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
@@ -18,7 +22,16 @@ final class Api
 {
     private const PACKAGE = 'stickysoftware/bump-laravel';
 
+    /**
+     * Seconds. SQS can't delay a message longer, and a broken or hostile answer must not park a job for days.
+     */
+    public const MAX_RETRY_AFTER = 900;
+
+    private const HTTPS_RULE = 'BUMP_URL has to use https, except for localhost, 127.0.0.1, ::1 and hosts ending in .test or .localhost.';
+
     private static bool $reportedVersionedUrl = false;
+
+    private static bool $reportedInsecureUrl = false;
 
     private static ?string $userAgent = null;
 
@@ -35,6 +48,33 @@ final class Api
     }
 
     /**
+     * Plain http would send the token in the clear, so it's only for a Bump on this machine or a local
+     * dev domain. Parsed the way the HTTP client parses it, so both agree on the host.
+     *
+     * @return string|null why the package won't send to BUMP_URL, null when it will
+     */
+    public function urlRefusal(): ?string
+    {
+        try {
+            $uri = new Uri((string) config('bump.url'));
+        } catch (MalformedUriException) {
+            return self::HTTPS_RULE;
+        }
+
+        if ($uri->getScheme() === 'https') {
+            return null;
+        }
+
+        $host = trim($uri->getHost(), '[]');
+
+        $local = in_array($host, ['localhost', '127.0.0.1', '::1'], true)
+            || str_ends_with($host, '.test')
+            || str_ends_with($host, '.localhost');
+
+        return $local ? null : self::HTTPS_RULE;
+    }
+
+    /**
      * @param  list<array<string, mixed>>  $events
      */
     public function send(array $events, bool $backfill = false, ?int $timeout = null): SendResult
@@ -45,6 +85,10 @@ final class Api
             Log::error('Bump dropped '.self::events(count($events)).': '.$this->tokenVariable().' is not set.');
 
             return SendResult::failed('No token.');
+        }
+
+        if (! $this->urlAllowed()) {
+            return SendResult::failed('BUMP_URL is not https.');
         }
 
         $response = $this->post($token, 'events', ['backfill' => $backfill, 'events' => $events], $timeout);
@@ -67,6 +111,12 @@ final class Api
             return SendResult::delivered($results);
         }
 
+        if ($response->redirect()) {
+            Log::error('Bump dropped '.self::events(count($events)).': '.$this->redirected($response));
+
+            return SendResult::failed("HTTP {$response->status()}");
+        }
+
         if ($this->retryable($response)) {
             return SendResult::retry($this->retryAfter($response), "HTTP {$response->status()}");
         }
@@ -84,6 +134,10 @@ final class Api
             Log::error('Bump could not forget an identifiable: '.$this->tokenVariable().' is not set.');
 
             return SendResult::failed('No token.');
+        }
+
+        if (! $this->urlAllowed()) {
+            return SendResult::failed('BUMP_URL is not https.');
         }
 
         // In the body, never the URL: URLs end up in access logs.
@@ -112,6 +166,12 @@ final class Api
             return SendResult::failed('HTTP 403');
         }
 
+        if ($response->redirect()) {
+            Log::error('Bump could not forget an identifiable: '.$this->redirected($response));
+
+            return SendResult::failed("HTTP {$response->status()}");
+        }
+
         if ($this->retryable($response)) {
             return SendResult::retry($this->retryAfter($response), "HTTP {$response->status()}");
         }
@@ -127,15 +187,17 @@ final class Api
     public static function forgetReportedWarnings(): void
     {
         self::$reportedVersionedUrl = false;
+        self::$reportedInsecureUrl = false;
     }
 
     /**
      * @param  array<string, mixed>  $body
      * @return Response|SendResult the answer, or a retry when there was none
      */
-    private function post(string $token, string $path, array $body, ?int $timeout): Response|SendResult
+    private function post(#[\SensitiveParameter] string $token, string $path, array $body, ?int $timeout): Response|SendResult
     {
-        $request = Http::withToken($token)->withUserAgent(self::userAgent())->acceptJson();
+        // No redirects: the https check vets BUMP_URL, not where it redirects to.
+        $request = Http::withToken($token)->withUserAgent(self::userAgent())->acceptJson()->withoutRedirecting();
 
         if ($timeout !== null) {
             $request->timeout($timeout);
@@ -174,6 +236,28 @@ final class Api
         }
 
         return "{$base}/v1/{$path}";
+    }
+
+    private function urlAllowed(): bool
+    {
+        $refusal = $this->urlRefusal();
+
+        if ($refusal === null) {
+            return true;
+        }
+
+        if (! self::$reportedInsecureUrl) {
+            self::$reportedInsecureUrl = true;
+
+            Log::error('Bump sends nothing: '.$refusal);
+        }
+
+        return false;
+    }
+
+    private function redirected(Response $response): string
+    {
+        return "BUMP_URL answered with a redirect (HTTP {$response->status()}), which the package doesn't follow.";
     }
 
     private function retryable(Response $response): bool
@@ -235,21 +319,31 @@ final class Api
         }
     }
 
+    /**
+     * Seconds or an HTTP date, capped at MAX_RETRY_AFTER. Anything else falls back to the package's own backoff.
+     */
     private function retryAfter(Response $response): ?int
     {
-        $header = $response->header('Retry-After');
+        $header = trim($response->header('Retry-After'));
 
         if ($header === '') {
             return null;
         }
 
         if (ctype_digit($header)) {
-            return (int) $header;
+            // Compared as text first: a long number overflows an int.
+            return strlen(ltrim($header, '0')) > strlen((string) self::MAX_RETRY_AFTER)
+                ? self::MAX_RETRY_AFTER
+                : min((int) $header, self::MAX_RETRY_AFTER);
         }
 
-        $date = strtotime($header);
+        $date = DateTimeImmutable::createFromFormat('!D, d M Y H:i:s \G\M\T', $header, new DateTimeZone('UTC'));
 
-        return $date === false ? null : max(0, $date - Carbon::now()->getTimestamp());
+        if ($date === false || DateTimeImmutable::getLastErrors() !== false) {
+            return null;
+        }
+
+        return min(max(0, $date->getTimestamp() - Carbon::now()->getTimestamp()), self::MAX_RETRY_AFTER);
     }
 
     public static function events(int $count): string

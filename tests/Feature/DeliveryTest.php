@@ -1,15 +1,22 @@
 <?php
 
-// Queue and sync delivery, which answers are retried, what gets logged, and that nothing ever throws into the app.
+// Queue and sync delivery, which answers are retried, what gets logged, what reaches the queue and the
+// log, and that nothing ever throws into the app.
 
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Sleep;
+use StickySoftware\Bump\Api;
+use StickySoftware\Bump\Delivery;
+use StickySoftware\Bump\EventRules;
 use StickySoftware\Bump\Facades\Bump;
 use StickySoftware\Bump\Jobs\SendEvents;
+use StickySoftware\Bump\Tests\Fixtures\Shop;
+use StickySoftware\Bump\Tests\Fixtures\Team;
 
 beforeEach(function () {
     Sleep::fake();
@@ -54,6 +61,53 @@ describe('queue delivery', function () {
         expect(DB::table('jobs')->value('payload'))->not->toContain('bump_test_secret');
     });
 
+    it('encrypts the queued payload', function () {
+        $this->loadLaravelMigrations();
+        config(['queue.default' => 'database']);
+
+        Bump::track('orders', note: 'first order');
+        Bump::flush();
+
+        $command = json_decode(DB::table('jobs')->value('payload'), true)['data']['command'];
+
+        expect($command)->not->toContain('first order')
+            ->and(unserialize(Crypt::decrypt($command)))->toBeInstanceOf(SendEvents::class);
+    });
+
+    it('still runs a job queued as a plain payload before the upgrade', function () {
+        $this->loadLaravelMigrations();
+        config(['queue.default' => 'database']);
+        fakeApi();
+
+        Bump::track('orders');
+        Bump::flush();
+
+        $payload = json_decode(DB::table('jobs')->value('payload'), true);
+        $payload['data']['command'] = Crypt::decrypt($payload['data']['command']);
+        DB::table('jobs')->update(['payload' => json_encode($payload)]);
+
+        $this->artisan('queue:work', ['--once' => true]);
+
+        expect(sentEvents())->toHaveCount(1);
+    });
+
+    it('keeps the rest of the batch when one event has text that is not valid UTF-8', function () {
+        $this->loadLaravelMigrations();
+        config(['queue.default' => 'database']);
+        fakeApi();
+        Log::spy();
+
+        Bump::track('orders', id: 'a');
+        Bump::track('orders', note: "caf\xE9");
+        Bump::track('orders', id: 'b');
+        Bump::flush();
+
+        $this->artisan('queue:work', ['--once' => true]);
+
+        expect(array_column(sentEvents(), 'id'))->toBe(['a', 'b']);
+        Log::shouldHaveReceived('warning')->once()->with("Bump dropped an event with text that isn't valid UTF-8.", ['trackable' => 'orders']);
+    });
+
     it('sends the events when a worker runs the job', function () {
         $this->loadLaravelMigrations();
         config(['queue.default' => 'database']);
@@ -86,6 +140,47 @@ describe('queue delivery', function () {
         app()->call([$job, 'handle']);
 
         $job->assertReleased(17);
+    });
+
+    it('caps Retry-After at 15 minutes', function () {
+        Http::fake(['*' => Http::response(null, 429, ['Retry-After' => '99999999999999999999999'])]);
+
+        $job = (new SendEvents([['id' => 'a', 'trackable' => 'orders']]))->withFakeQueueInteractions();
+        app()->call([$job, 'handle']);
+
+        $job->assertReleased(900);
+    });
+
+    it('reads Retry-After as an HTTP date', function () {
+        $this->freezeTime();
+        Http::fake(['*' => Http::response(null, 503, ['Retry-After' => now()->addSeconds(40)->utc()->format('D, d M Y H:i:s \G\M\T')])]);
+
+        $job = (new SendEvents([['id' => 'a', 'trackable' => 'orders']]))->withFakeQueueInteractions();
+        app()->call([$job, 'handle']);
+
+        $job->assertReleased(40);
+    });
+
+    it('falls back to its own backoff for a Retry-After it cannot read', function (string $header) {
+        Http::fake(['*' => Http::response(null, 503, ['Retry-After' => $header])]);
+
+        $job = (new SendEvents([['id' => 'a', 'trackable' => 'orders']]))->withFakeQueueInteractions();
+        app()->call([$job, 'handle']);
+
+        $job->assertReleased(SendEvents::BACKOFF[0]);
+    })->with(['-5', '1.5', 'tomorrow', '+1 year']);
+
+    it('does not follow or retry a redirect', function () {
+        Http::fake(['*' => Http::response(null, 302, ['Location' => 'https://elsewhere.example'])]);
+        Log::spy();
+
+        $job = (new SendEvents([['id' => 'a', 'trackable' => 'orders']]))->withFakeQueueInteractions();
+        app()->call([$job, 'handle']);
+
+        Http::assertSentCount(1);
+        $job->assertNotReleased();
+        $job->assertNotFailed();
+        Log::shouldHaveReceived('error')->once()->with("Bump dropped 1 event: BUMP_URL answered with a redirect (HTTP 302), which the package doesn't follow.");
     });
 
     it('releases with its own backoff without Retry-After', function () {
@@ -202,6 +297,60 @@ describe('sync delivery', function () {
             && $context['retry_after'] === 45);
     });
 
+    it('caps a huge Retry-After at 15 minutes', function () {
+        Http::fake(['*' => Http::response(null, 429, ['Retry-After' => (string) PHP_INT_MAX])]);
+        Log::spy();
+
+        Bump::track('orders');
+        Bump::flush();
+
+        Sleep::assertNeverSlept();
+        Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message, array $context) => $context['retry_after'] === 900);
+    });
+
+    it('asks the HTTP client not to follow redirects, and logs one without retrying', function () {
+        $options = null;
+        Http::fake(function ($request, array $requestOptions) use (&$options) {
+            $options = $requestOptions;
+
+            return Http::response(null, 301, ['Location' => 'https://elsewhere.example']);
+        });
+        Log::spy();
+
+        Bump::track('orders');
+        Bump::flush();
+
+        expect($options['allow_redirects'])->toBeFalse();
+        Http::assertSentCount(1);
+        Sleep::assertNeverSlept();
+        Log::shouldHaveReceived('error')->once()->with("Bump dropped 1 event: BUMP_URL answered with a redirect (HTTP 301), which the package doesn't follow.");
+    });
+
+    it('drops only the event with text that is not valid UTF-8, never logging the bad value', function (array $arguments) {
+        fakeApi();
+        Log::spy();
+
+        Bump::track('orders', id: 'a');
+        Bump::track(...['trackable' => 'orders', ...$arguments]);
+        Bump::track('orders', identifiable: new Shop(['id' => 1, 'slug' => "caf\xE9"]));
+        Bump::track('orders', identifiable: new Team(['id' => 8, 'prefixed_id' => 'tem_1', 'name' => "Caf\xE9"]));
+        Bump::track('orders', id: 'b');
+        Bump::flush();
+
+        expect(array_column(sentEvents(), 'id'))->toBe(['a', 'b']);
+        Log::shouldHaveReceived('warning')->times(3)->withArgs(fn (string $message, array $context) => $message === "Bump dropped an event with text that isn't valid UTF-8."
+            && EventRules::validUtf8($context));
+    })->with([
+        'trackable' => [['trackable' => "orders\xC3"]],
+        'id' => [['id' => "order-\xFF"]],
+        'note' => [['note' => "caf\xE9"]],
+        'amount' => [['amount' => "1\xA0"]],
+        'handle' => [['identifiable' => "usr_\xB1"]],
+        'handle in a list' => [['identifiable' => ['usr_1', "usr_\xB1"]]],
+        'handle in a map' => [['identifiable' => ['handle' => "usr_\xB1", 'label' => 'Acme']]],
+        'label in a map' => [['identifiable' => ['handle' => 'usr_1', 'label' => "Acme \xB1"]]],
+    ]);
+
     it('gives up with an error after three attempts', function () {
         Http::fake(['*' => Http::response(null, 500)]);
         Log::spy();
@@ -282,6 +431,27 @@ describe('never throws into the app', function () {
 
         Log::shouldHaveReceived('error')->once();
     })->with(['sync', 'queue']);
+
+    it('keeps the token out of the arguments in a stack trace', function () {
+        $ignoreArgs = ini_set('zend.exception_ignore_args', '0');
+        $exception = null;
+        Http::fake(function () use (&$exception) {
+            throw $exception = new RuntimeException('Something unexpected.');
+        });
+
+        try {
+            app(Delivery::class)->sendNow([['id' => 'a', 'trackable' => 'orders']]);
+        } catch (RuntimeException) {
+        } finally {
+            ini_set('zend.exception_ignore_args', (string) $ignoreArgs);
+        }
+
+        $post = collect($exception->getTrace())->first(fn (array $frame) => ($frame['class'] ?? null) === Api::class && $frame['function'] === 'post');
+        $scalars = collect($exception->getTrace())->flatMap(fn (array $frame) => $frame['args'] ?? [])->filter(fn (mixed $arg) => is_scalar($arg));
+
+        expect($post['args'][0])->toBeInstanceOf(SensitiveParameterValue::class)
+            ->and($scalars)->not->toContain('bump_test_secret');
+    });
 
     it('swallows a failure while recording', function () {
         Log::spy();

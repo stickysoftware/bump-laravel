@@ -243,6 +243,54 @@ it('refuses to run without a token', function () {
     Http::assertNothingSent();
 });
 
+it('refuses a plain http BUMP_URL before sending anything', function () {
+    config(['bump.url' => 'http://api.bump.example']);
+    ListBackfill::$events = orders(1);
+
+    $this->artisan('bump:backfill', backfill())
+        ->expectsOutputToContain('BUMP_URL has to use https')
+        ->assertFailed();
+
+    Http::assertNothingSent();
+});
+
+it('counts on a dry run with a plain http BUMP_URL', function () {
+    config(['bump.url' => 'http://api.bump.example']);
+    ListBackfill::$events = orders(2);
+
+    $this->artisan('bump:backfill', backfill(['--dry-run' => true]))
+        ->expectsOutputToContain('2 events')
+        ->assertSuccessful();
+
+    Http::assertNothingSent();
+});
+
+it('stops with a one-line reason when sending throws', function () {
+    Http::fake(fn () => throw new RuntimeException("Something unexpected.\nWith a second line."));
+    ListBackfill::$events = orders(1);
+
+    $this->artisan('bump:backfill', backfill())
+        ->expectsOutputToContain("Bump couldn't send a batch: Something unexpected.")
+        ->doesntExpectOutputToContain('With a second line.')
+        ->expectsOutputToContain('Stopped at '.ListBackfill::class.'. Run the same command again to carry on.')
+        ->assertFailed();
+});
+
+it('rejects an event with text that is not valid UTF-8 and sends the rest', function () {
+    fakeApi();
+    ListBackfill::$events = [
+        ...iterator_to_array(orders(1)),
+        ['id' => 'order-2', 'trackable' => 'orders', 'note' => "caf\xE9", 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+        ['id' => 'order-3', 'trackable' => 'orders', "not\xFF" => 1, 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+    ];
+
+    $this->artisan('bump:backfill', backfill())
+        ->expectsOutputToContain("2 × The event has text that isn't valid UTF-8.")
+        ->assertSuccessful();
+
+    expect(array_column(sentEvents(), 'id'))->toBe(['order-1']);
+});
+
 it('starts its summary from zero on a second run in the same process', function () {
     fakeApi();
 

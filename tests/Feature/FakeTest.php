@@ -177,6 +177,33 @@ describe('recording', function () {
         Bump::assertNothingTracked();
         Log::shouldHaveReceived('warning')->once()->with('Bump dropped an event with 101 values: a request takes at most 100.', ['trackable' => 'orders']);
     });
+
+    it('drops a call with text that is not valid UTF-8, like real delivery', function () {
+        Log::spy();
+        Bump::fake();
+
+        Bump::track('orders', note: "caf\xE9");
+        Bump::track('orders', identifiable: new Team(['id' => 8, 'prefixed_id' => 'tem_1', 'name' => "Caf\xE9"]));
+        Bump::track('orders');
+
+        Bump::assertTrackedTimes('orders', 1);
+        expect(fn () => Bump::assertTrackedTimes('orders', 3))->toThrow(
+            ExpectationFailedException::class,
+            "Bump dropped 2 calls to [orders]:\n- Bump dropped an event with text that isn't valid UTF-8.",
+        );
+        Log::shouldHaveReceived('warning')->twice()->with("Bump dropped an event with text that isn't valid UTF-8.", ['trackable' => 'orders']);
+    });
+
+    it('records with a BUMP_URL real delivery would refuse', function () {
+        config(['bump.url' => 'http://api.bump.example']);
+        Bump::fake();
+
+        Bump::track('orders');
+        Bump::forget('usr_1');
+
+        Bump::assertTracked('orders');
+        Bump::assertForgotten('usr_1');
+    });
 });
 
 describe('model handles', function () {
@@ -450,6 +477,16 @@ describe('forget', function () {
             "Expected [user_1] to be forgotten, but it was not.\n\nBump dropped 1 call to forget():\n- An unsaved ".User::class.' has no key to build a Bump handle from.',
         );
         Log::shouldHaveReceived('warning')->once()->withArgs(fn (string $message) => $message === 'Bump could not forget an identifiable.');
+    });
+
+    it('drops a forget for a handle that is not valid UTF-8', function () {
+        Log::spy();
+        Bump::fake();
+
+        Bump::forget("usr_\xB1");
+
+        expect(Bump::forgotten())->toBeEmpty();
+        Log::shouldHaveReceived('warning')->once()->with('Bump could not forget an identifiable.', ['exception' => "The handle isn't valid UTF-8."]);
     });
 
     it('sends and queues nothing', function () {

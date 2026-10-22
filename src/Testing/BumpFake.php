@@ -10,7 +10,6 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\Testing\Fakes\Fake;
-use InvalidArgumentException;
 use PHPUnit\Framework\Assert as PHPUnit;
 use StickySoftware\Bump\Batch;
 use StickySoftware\Bump\EventRules;
@@ -74,13 +73,7 @@ final class BumpFake implements Fake
     public function forget(Model|string|int $identifiable): void
     {
         try {
-            $handle = $this->handle($identifiable);
-
-            if ($handle === '') {
-                throw new InvalidArgumentException('An empty handle names no identifiable.');
-            }
-
-            $this->forgotten[] = $handle;
+            $this->forgotten[] = Identifiables::handleToForget($identifiable);
         } catch (Throwable $e) {
             Log::warning('Bump could not forget an identifiable.', ['exception' => $e->getMessage()]);
 
@@ -202,6 +195,16 @@ final class BumpFake implements Fake
             EventRules::check($id, $count, $amount);
 
             $identifiables = Identifiables::normalize($identifiable);
+
+            if (! EventRules::validUtf8([$trackable, $id, $note, $identifiables, $amount])) {
+                Log::warning(EventRules::INVALID_UTF8, [
+                    'trackable' => mb_check_encoding($trackable, 'UTF-8') ? $trackable : null,
+                ]);
+                $this->dropped[$trackable][] = EventRules::INVALID_UTF8;
+
+                return;
+            }
+
             $size = Batch::size(['count' => $count, 'amount' => $amount]);
 
             if ($size > Batch::MAX_EVENTS) {

@@ -11,6 +11,7 @@ use Illuminate\Support\Sleep;
 use StickySoftware\Bump\Facades\Bump;
 use StickySoftware\Bump\Jobs\ForgetIdentifiable;
 use StickySoftware\Bump\Jobs\SendEvents;
+use StickySoftware\Bump\Tests\Fixtures\Shop;
 use StickySoftware\Bump\Tests\Fixtures\User;
 
 beforeEach(function () {
@@ -106,6 +107,16 @@ describe('sync delivery', function () {
         Http::assertSentCount(1);
         Log::shouldHaveReceived('error')->once()->withArgs(fn (string $message, array $context) => $message === 'Bump refused to forget an identifiable.'
             && $context['status'] === 404);
+    });
+
+    it('does not follow or retry a redirect', function () {
+        fakeForgetApi(Http::response(null, 308, ['Location' => 'https://elsewhere.example']));
+        Log::spy();
+
+        Bump::forget('usr_3f9a');
+
+        Http::assertSentCount(1);
+        Log::shouldHaveReceived('error')->once()->with("Bump could not forget an identifiable: BUMP_URL answered with a redirect (HTTP 308), which the package doesn't follow.");
     });
 
     it('warns once, without retrying, when the token lacks the forget ability', function () {
@@ -224,6 +235,16 @@ describe('queue delivery', function () {
         expect(DB::table('jobs')->value('payload'))->not->toContain('bump_test_secret');
     });
 
+    it('encrypts the queued payload, the chained forget included', function () {
+        $this->loadLaravelMigrations();
+        config(['queue.default' => 'database']);
+
+        Bump::track('orders', identifiable: 'usr_3f9a');
+        Bump::forget('usr_3f9a');
+
+        expect(DB::table('jobs')->value('payload'))->not->toContain('usr_3f9a');
+    });
+
     it('releases a retryable forget with the Retry-After delay', function () {
         Http::fake(['*' => Http::response(['error' => ['code' => 'rate_limited']], 429, ['Retry-After' => '17'])]);
 
@@ -307,6 +328,17 @@ describe('never throws into the app', function () {
 
         Queue::assertNothingPushed();
         Log::shouldHaveReceived('warning')->once();
+    });
+
+    it('drops a forget for a handle that is not valid UTF-8, without logging it', function () {
+        Queue::fake();
+        Log::spy();
+
+        Bump::forget("usr_\xB1");
+        Bump::forget(new Shop(['id' => 1, 'slug' => "caf\xE9"]));
+
+        Queue::assertNothingPushed();
+        Log::shouldHaveReceived('warning')->twice()->with('Bump could not forget an identifiable.', ['exception' => "The handle isn't valid UTF-8."]);
     });
 
     it('drops a forget when turned off or without a token', function (array $config) {

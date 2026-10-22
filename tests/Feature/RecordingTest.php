@@ -345,8 +345,8 @@ describe('identifiables', function () {
         Bump::flush();
 
         expect(array_column(sentEvents(), 'identifiable'))->toBe(['user_12', 'user_13', 'team_8', 'team_member_3']);
-        Log::shouldHaveReceived('warning', ['Bump fell back to user_12 style handles for '.User::class.': some rows have no prefixed_id.'])->once();
-        Log::shouldHaveReceived('warning', ['Bump fell back to team_8 style handles for '.Team::class.': some rows have no prefixed_id.'])->once();
+        Log::shouldHaveReceived('warning', ['Bump fell back to user_{key} handles for '.User::class.': some rows have no prefixed_id.'])->once();
+        Log::shouldHaveReceived('warning', ['Bump fell back to team_{key} handles for '.Team::class.': some rows have no prefixed_id.'])->once();
         Log::shouldHaveReceived('warning')->twice();
     });
 
@@ -400,7 +400,7 @@ describe('identifiables', function () {
 
             expect(array_column(sentEvents(), 'identifiable'))->toBe(['user_3', 'user_3'])
                 ->and($user->isDirty())->toBeFalse();
-            Log::shouldHaveReceived('warning', ['Bump fell back to user_3 style handles for '.User::class.': some rows have no prefixed_id.'])->once();
+            Log::shouldHaveReceived('warning', ['Bump fell back to user_{key} handles for '.User::class.': some rows have no prefixed_id.'])->once();
         });
     });
 

@@ -7,7 +7,6 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use InvalidArgumentException;
 use Throwable;
 
 /**
@@ -77,11 +76,7 @@ final class Tracker
                 return;
             }
 
-            $handle = $identifiable instanceof Model ? Identifiables::handle($identifiable) : (string) $identifiable;
-
-            if ($handle === '') {
-                throw new InvalidArgumentException('An empty handle names no identifiable.');
-            }
+            $handle = Identifiables::handleToForget($identifiable);
 
             app(Delivery::class)->forget(app(Buffer::class)->pull(), $handle);
         } catch (Throwable $e) {
@@ -121,6 +116,14 @@ final class Tracker
                 'activity' => $activity,
                 'note' => $note,
             ], fn (mixed $value) => $value !== null);
+
+            if (! EventRules::validUtf8($event)) {
+                Log::warning(EventRules::INVALID_UTF8, [
+                    'trackable' => mb_check_encoding($trackable, 'UTF-8') ? $trackable : null,
+                ]);
+
+                return;
+            }
 
             $this->buffer($event);
         } catch (Throwable $e) {

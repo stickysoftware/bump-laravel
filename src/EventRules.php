@@ -11,6 +11,8 @@ final class EventRules
 {
     public const MAX_ID_LENGTH = 64;
 
+    public const INVALID_UTF8 = "Bump dropped an event with text that isn't valid UTF-8.";
+
     /**
      * @throws InvalidArgumentException with the reason the event can't be sent
      */
@@ -31,5 +33,28 @@ final class EventRules
         if (is_array($count) && is_array($amount)) {
             throw new InvalidArgumentException("count and amount can't both be lists.");
         }
+    }
+
+    /**
+     * Every string, keys included: one invalid byte fails the JSON for the whole batch. Bytes are never
+     * replaced, since a changed handle or id would count as a different one.
+     */
+    public static function validUtf8(mixed $value): bool
+    {
+        if (is_string($value)) {
+            return mb_check_encoding($value, 'UTF-8');
+        }
+
+        if (! is_array($value)) {
+            return true;
+        }
+
+        foreach ($value as $key => $item) {
+            if (! self::validUtf8($key) || ! self::validUtf8($item)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

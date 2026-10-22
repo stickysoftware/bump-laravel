@@ -52,6 +52,7 @@ Bump::adjust('orders', identifiable: $order->user, amount: -25.00, note: 'partia
 
 - `APP_ENV=production` sends with `BUMP_LIVE_TOKEN`, every other environment with `BUMP_TEST_TOKEN`. Without the token for the current environment, calls are dropped.
 - Production `.env`: `BUMP_LIVE_TOKEN`. Local and staging `.env`: `BUMP_TEST_TOKEN`. Never put the live token in a non-production environment.
+- `BUMP_URL` has to use https. Plain http works only for localhost, 127.0.0.1, ::1 and hosts ending in `.test` or `.localhost`; any other plain http URL sends nothing.
 
 ## Backfill
 

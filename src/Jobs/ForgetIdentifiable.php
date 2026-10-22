@@ -3,6 +3,7 @@
 namespace StickySoftware\Bump\Jobs;
 
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldBeEncrypted;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Jobs\SyncJob;
@@ -20,7 +21,7 @@ use Throwable;
  *
  * @internal
  */
-class ForgetIdentifiable implements ShouldQueue
+class ForgetIdentifiable implements ShouldBeEncrypted, ShouldQueue
 {
     use InteractsWithQueue, Queueable;
 
