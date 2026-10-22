@@ -2,7 +2,7 @@
 
 All notable changes to `stickysoftware/bump-laravel` are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## 1.1.0 - Unreleased
+## 1.1.0 - 2026-10-22
 
 - `Bump::total()` reads one trackable's totals for the whole project. It needs a token made with **Can read totals**.
 - `StickySoftware\Bump\Total` holds them: `handle`, `count`, `amount` (a string with two decimals, like `"59.94"`), `currency` and `lastEventAt`.
