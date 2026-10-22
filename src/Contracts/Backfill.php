@@ -11,6 +11,7 @@ interface Backfill
      * `$window->constrain($query, 'paid_at')`. Each needs an `id` derived from the app's own data
      * (like "order-1042"), so running the backfill again skips what was already sent. `identifiable`
      * takes models like Bump::track() does. `occurred_at` is required and takes a DateTimeInterface.
+     * `amount` and `cents` take what `amount:` and `cents:` take on Bump::track(), one of the two.
      *
      * @return iterable<array<string, mixed>>
      */

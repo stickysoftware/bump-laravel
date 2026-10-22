@@ -7,8 +7,8 @@ use StickySoftware\Bump\Testing\BumpFake;
 use StickySoftware\Bump\Tracker;
 
 /**
- * @method static void track(string $trackable, mixed $identifiable = null, int|list<int>|null $count = null, int|float|string|list<int|float|string>|null $amount = null, ?\DateTimeInterface $occurredAt = null, ?string $note = null, ?bool $activity = null, ?string $id = null)
- * @method static void adjust(string $trackable, mixed $identifiable = null, int|list<int>|null $count = 0, int|float|string|list<int|float|string>|null $amount = null, ?\DateTimeInterface $occurredAt = null, ?string $note = null, ?bool $activity = false, ?string $id = null)
+ * @method static void track(string $trackable, mixed $identifiable = null, int|list<int>|null $count = null, int|float|string|list<int|float|string>|null $amount = null, ?\DateTimeInterface $occurredAt = null, ?string $note = null, ?bool $activity = null, ?string $id = null, int|list<int>|null $cents = null)
+ * @method static void adjust(string $trackable, mixed $identifiable = null, int|list<int>|null $count = 0, int|float|string|list<int|float|string>|null $amount = null, ?\DateTimeInterface $occurredAt = null, ?string $note = null, ?bool $activity = false, ?string $id = null, int|list<int>|null $cents = null)
  * @method static void forget(\Illuminate\Database\Eloquent\Model|string|int $identifiable)
  * @method static void flush()
  * @method static \StickySoftware\Bump\Total total(string $trackable)

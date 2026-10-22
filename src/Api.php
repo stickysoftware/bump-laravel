@@ -15,6 +15,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
 use StickySoftware\Bump\Exceptions\BumpException;
 use Throwable;
 
@@ -300,7 +301,11 @@ final class Api
             return null;
         }
 
-        return new Total($handle, $count, $amount, $currency, $lastEventAt);
+        try {
+            return new Total($handle, $count, $amount, $currency, $lastEventAt);
+        } catch (InvalidArgumentException) {
+            return null;
+        }
     }
 
     private static function timestamp(mixed $value): ?CarbonImmutable

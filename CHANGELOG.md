@@ -2,6 +2,18 @@
 
 All notable changes to `stickysoftware/bump-laravel` are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 1.2.0 - Unreleased
+
+- `cents:` on `Bump::track()` and `Bump::adjust()`, for whole cents like a Cashier amount or a `*_cents` column: `cents: 4999` sends `"49.99"`. It takes an int or a list, and comes last, so calls that pass arguments by position keep working. Backfill events take a `cents` key the same way.
+- Every amount is sent as a string with two decimals: `49.99` as `"49.99"`, `50.0` as `"50.00"`. Float noise like `0.1 + 0.2` goes out as `"0.30"`.
+- An amount with more than 2 decimals, like `49.999`, is dropped with a warning instead of sent. So is a call with both `amount` and `cents`.
+- `Total->cents` gives a total's amount in cents, as an int.
+- `TrackedEvent->cents` in `Bump::fake()`. `TrackedEvent->amount` stays what the call passed.
+
+### Upgrading
+
+- An int in `amount:` is sent as it is, and Bump now refuses it, since a whole number could be cents. So is a string without decimals like `'50'`. Pass whole cents with `cents:`, and a whole amount as a float or a string with decimals: `amount: 50.0` or `amount: '50.00'`. The same goes for `amount` in backfill events.
+
 ## 1.1.0 - 2026-10-22
 
 - `Bump::total()` reads one trackable's totals for the whole project. It needs a token made with **Can read totals**.

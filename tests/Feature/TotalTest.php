@@ -54,6 +54,7 @@ describe('reading', function () {
             ->and($total->handle)->toBe('exports.png')
             ->and($total->count)->toBe(3)
             ->and($total->amount)->toBe('59.94')
+            ->and($total->cents)->toBe(5994)
             ->and($total->currency)->toBe('EUR')
             ->and($total->lastEventAt)->toBeInstanceOf(CarbonImmutable::class)
             ->and($total->lastEventAt->toIso8601ZuluString())->toBe('2026-10-18T16:48:55Z')
@@ -64,7 +65,22 @@ describe('reading', function () {
         Http::fake(['*' => Http::response(trackableBody(['amount' => $amount]))]);
 
         expect(Bump::total('exports.png')->amount)->toBe($amount);
-    })->with(['0.00', '-25.00', '12345678901234567890.10']);
+    })->with(['0.00', '-25.00', '92233720368547758.07']);
+
+    it('gives the amount in cents, without float math', function (string $amount, int $cents) {
+        Http::fake(['*' => Http::response(trackableBody(['amount' => $amount]))]);
+
+        expect(Bump::total('exports.png')->cents)->toBe($cents);
+    })->with([
+        ['0.00', 0],
+        ['0.07', 7],
+        ['-0.05', -5],
+        ['-25.00', -2500],
+        ['1.10', 110],
+        ['59.97', 5997],
+        ['92233720368547758.07', PHP_INT_MAX],
+        ['-92233720368547758.08', PHP_INT_MIN],
+    ]);
 
     it('reads a trackable without events yet', function () {
         Http::fake(['*' => Http::response(trackableBody(['count' => 0, 'amount' => '0.00', 'last_event_at' => null]))]);
@@ -292,6 +308,7 @@ describe('failures', function () {
         'amount with one decimal' => [trackableBody(['amount' => '59.9'])],
         'amount without decimals' => [trackableBody(['amount' => '59'])],
         'amount with a comma' => [trackableBody(['amount' => '59,94'])],
+        'amount too large to count in cents' => [trackableBody(['amount' => '92233720368547758.08'])],
         'count as text' => [trackableBody(['count' => '3'])],
         'count as a float' => [trackableBody(['count' => 3.5])],
         'no handle' => [array_diff_key(trackableBody(), ['handle' => true])],

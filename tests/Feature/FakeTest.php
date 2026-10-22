@@ -172,6 +172,40 @@ describe('recording', function () {
         );
     });
 
+    it('records the amount as the call passed it, and cents next to it', function () {
+        Bump::fake();
+
+        Bump::track('orders', amount: 49.9);
+        Bump::track('orders', amount: 2500);
+        Bump::track('orders', cents: 4999);
+        Bump::adjust('orders', cents: [-500, -1000]);
+
+        expect(Bump::tracked('orders')->map(fn (TrackedEvent $event) => [$event->amount, $event->cents])->all())->toBe([
+            [49.9, null],
+            [2500, null],
+            [null, 4999],
+            [null, [-500, -1000]],
+        ]);
+        Bump::assertTracked('orders', fn (TrackedEvent $event) => $event->cents === 4999);
+    });
+
+    it('drops a call with an amount real delivery would drop, and says why', function (array $arguments, string $reason) {
+        Log::spy();
+        Bump::fake();
+
+        Bump::track(...['trackable' => 'orders', ...$arguments]);
+
+        expect(fn () => Bump::assertTracked('orders'))->toThrow(
+            ExpectationFailedException::class,
+            "Bump dropped 1 call to [orders]:\n- {$reason}",
+        );
+        Log::shouldHaveReceived('warning')->once()->with('Bump dropped an event it could not record.', ['trackable' => 'orders', 'exception' => $reason]);
+    })->with([
+        'a third decimal' => [['amount' => 49.999], 'Amounts take at most 2 decimals, got 49.999.'],
+        'amount and cents' => [['amount' => 49.99, 'cents' => 4999], "amount and cents can't both be given."],
+        'a count list and a cents list' => [['count' => [1, 2], 'cents' => [100, 200]], "count and cents can't both be lists."],
+    ]);
+
     it('drops a call with more than 100 values, like real delivery', function () {
         Log::spy();
         Bump::fake();
@@ -530,6 +564,7 @@ describe('totals', function () {
             ->and($total->handle)->toBe('exports.png')
             ->and($total->count)->toBe(3)
             ->and($total->amount)->toBe('59.94')
+            ->and($total->cents)->toBe(5994)
             ->and($total->currency)->toBe('USD')
             ->and($total->lastEventAt)->toBeInstanceOf(CarbonImmutable::class)
             ->and($total->lastEventAt->format('Y-m-d H:i:s e'))->toBe('2026-10-18 16:48:55 UTC');
@@ -542,6 +577,7 @@ describe('totals', function () {
 
         expect($total->count)->toBe(0)
             ->and($total->amount)->toBe('0.00')
+            ->and($total->cents)->toBe(0)
             ->and($total->currency)->toBe('EUR')
             ->and($total->lastEventAt)->toBeNull();
     });
@@ -564,25 +600,33 @@ describe('totals', function () {
         expect(Bump::total('orders')->count)->toBe(2);
     });
 
-    it('writes the amount with two decimals, exactly', function (int|float|string $amount, string $expected) {
+    it('writes the amount with two decimals and in cents, exactly', function (int|float|string $amount, string $expected, int $cents) {
         Bump::fake()->withTotal('orders', amount: $amount);
 
-        expect(Bump::total('orders')->amount)->toBe($expected);
+        expect(Bump::total('orders')->amount)->toBe($expected)
+            ->and(Bump::total('orders')->cents)->toBe($cents);
     })->with([
-        [59.9, '59.90'],
-        [59.94, '59.94'],
-        [0.07, '0.07'],
-        [1.1, '1.10'],
-        [-25, '-25.00'],
-        [-25.5, '-25.50'],
-        [0, '0.00'],
-        [-0.0, '0.00'],
-        [1e15, '1000000000000000.00'],
-        ['59.9', '59.90'],
-        ['-0.5', '-0.50'],
-        ['007', '7.00'],
-        ['12345678901234567890.12', '12345678901234567890.12'],
+        [59.9, '59.90', 5990],
+        [59.94, '59.94', 5994],
+        [0.07, '0.07', 7],
+        [1.1, '1.10', 110],
+        [-25, '-25.00', -2500],
+        [-25.5, '-25.50', -2550],
+        [0, '0.00', 0],
+        [-0.0, '0.00', 0],
+        [1e15, '1000000000000000.00', 100000000000000000],
+        ['59.9', '59.90', 5990],
+        ['-0.5', '-0.50', -50],
+        ['007', '7.00', 700],
+        ['92233720368547758.07', '92233720368547758.07', PHP_INT_MAX],
     ]);
+
+    it('throws for an amount too large to count in cents', function () {
+        Bump::fake();
+
+        expect(fn () => Bump::withTotal('orders', amount: '92233720368547758.08'))
+            ->toThrow(InvalidArgumentException::class, '92233720368547758.08 is too large to count in cents.');
+    });
 
     it('throws for an amount it would have to round', function (float|string $amount) {
         Bump::fake();

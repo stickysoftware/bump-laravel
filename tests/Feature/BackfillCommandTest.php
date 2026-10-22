@@ -96,6 +96,61 @@ it('takes models and dates like track() does', function () {
     ]);
 });
 
+it('sends amount and cents as amounts with two decimals', function () {
+    fakeApi();
+    ListBackfill::$events = [
+        ['id' => 'float', 'trackable' => 'orders', 'amount' => 10.5, 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+        ['id' => 'decimal-column', 'trackable' => 'orders', 'amount' => '49.9900', 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+        ['id' => 'int', 'trackable' => 'orders', 'amount' => 20, 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+        ['id' => 'cents', 'trackable' => 'orders', 'cents' => 4999, 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+        ['id' => 'cents-list', 'trackable' => 'refunds', 'cents' => [-500, -5], 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+    ];
+
+    $this->artisan('bump:backfill', backfill())->assertSuccessful();
+
+    expect(array_column(sentEvents(), 'amount', 'id'))->toBe([
+        'float' => '10.50',
+        'decimal-column' => '49.99',
+        'int' => 20,
+        'cents' => '49.99',
+        'cents-list' => ['-5.00', '-0.05'],
+    ])->and(array_filter(sentEvents(), fn (array $event) => array_key_exists('cents', $event)))->toBe([]);
+});
+
+it('rejects events with an amount Bump would have to round, or both amount and cents', function () {
+    fakeApi();
+    ListBackfill::$events = [
+        ['id' => 'order-1', 'trackable' => 'orders', 'amount' => '10.00', 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+        ['id' => 'order-2', 'trackable' => 'orders', 'amount' => 10.005, 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+        ['id' => 'order-3', 'trackable' => 'orders', 'amount' => 10.0, 'cents' => 1000, 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+        ['id' => 'order-4', 'trackable' => 'orders', 'cents' => '1000', 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+        ['id' => 'order-5', 'trackable' => 'orders', 'count' => [1, 1], 'cents' => [500, 500], 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+    ];
+
+    $this->artisan('bump:backfill', backfill())
+        ->expectsTable(['Accepted', 'Duplicate', 'Rejected'], [[1, 0, 4]])
+        ->expectsOutputToContain('1 × Amounts take at most 2 decimals, got 10.005.')
+        ->expectsOutputToContain("1 × amount and cents can't both be given.")
+        ->expectsOutputToContain('1 × cents takes whole numbers, got string.')
+        ->expectsOutputToContain("1 × count and cents can't both be lists.")
+        ->assertSuccessful();
+
+    expect(array_column(sentEvents(), 'id'))->toBe(['order-1']);
+});
+
+it('counts a cents list toward a batch, like an amount list', function () {
+    fakeApi();
+    ListBackfill::$events = [
+        ...iterator_to_array(orders(99)),
+        ['id' => 'refunds', 'trackable' => 'refunds', 'cents' => [-500, -1000], 'occurred_at' => '2026-09-15T10:00:00+00:00'],
+    ];
+
+    $this->artisan('bump:backfill', backfill())->assertSuccessful();
+
+    $sizes = collect(Http::recorded())->map(fn (array $pair) => count($pair[0]->data()['events']))->all();
+    expect($sizes)->toBe([99, 1]);
+});
+
 it('rejects events without an id and sends the rest', function () {
     fakeApi();
     ListBackfill::$events = [

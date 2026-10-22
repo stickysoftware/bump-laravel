@@ -72,7 +72,7 @@ Bump::track(
     'orders',
     identifiable: $user,                // a model, a handle, or a list of them
     count: 1,                           // or a list: [1, 2] sends two events
-    amount: 49.99,                      // or a list
+    amount: 49.99,                      // or a list, or cents: 4999 instead
     occurredAt: $order->paid_at,
     note: 'first order',
     activity: true,
@@ -85,6 +85,25 @@ What you leave out is left out of the request, so Bump's own defaults apply: `co
 `count` and `amount` can't both be lists in one call. Bump rejects that, so the package drops it with a warning.
 
 `adjust()` is for corrections. It takes the same arguments but sends `count: 0` and `activity: false` unless you pass them, so a refund changes the amount without counting another order or an active user.
+
+### Amounts
+
+Amounts are in the project currency. Pass them one of two ways:
+
+- `amount:` takes a decimal, as a float or a string: `49.99`, `'49.99'`.
+- `cents:` takes whole cents, as an int: `4999`. Use it for a Cashier amount or a `*_cents` column.
+
+```php
+Bump::track('orders', identifiable: $order->user, cents: $order->total_cents);
+```
+
+The package sends every amount as a string with two decimals, so `amount: 50.0` goes out as `"50.00"` and `cents: 4999` as `"49.99"`, without float math. Float noise is fine: `0.1 + 0.2` is `0.30000000000000004` in PHP and goes out as `"0.30"`.
+
+An amount takes at most 2 decimals. Bump never rounds, so the package drops an amount with more, like `49.999`, with a warning. Zeros at the end don't count: `'49.9900'` from a `decimal(10,4)` column is `"49.99"`.
+
+An int in `amount:` is sent as it is, and so is a string without decimals like `'50'`. Bump refuses it, since a whole number could be cents, and the project shows it under Problems. For whole cents use `cents:`. For a whole amount, pass a float or a string with decimals: `amount: 50.0` or `amount: '50.00'`.
+
+`amount` and `cents` can't both be passed in one call, and `count` and `cents` can't both be lists. The package drops such a call with a warning.
 
 ### Identifiables
 
@@ -132,7 +151,7 @@ One id per event: a refund needs its own, or Bump takes it for the order again a
 Bump::adjust('orders', identifiable: $order->user, amount: -25.00, id: "refund-{$refund->id}");
 ```
 
-An id takes 1 to 64 characters. An empty or longer one drops the event with a warning. With a `count` or `amount` list, send one id for the call: Bump gives each value its own key from it.
+An id takes 1 to 64 characters. An empty or longer one drops the event with a warning. With a `count`, `amount` or `cents` list, send one id for the call: Bump gives each value its own key from it.
 
 ### Forgetting an identifiable
 
@@ -193,6 +212,7 @@ The catch: a failed read caches nothing and throws in the page that asked, and a
 | `handle` | The trackable's handle |
 | `count` | The total count, an int |
 | `amount` | The total amount in the project currency, as a string with two decimals: `"59.94"`, `"0.00"` for a trackable that only counts |
+| `cents` | The same amount in cents, an int: `5994` |
 | `currency` | The project's currency, like `EUR` |
 | `lastEventAt` | When Bump received the latest event, a `CarbonImmutable` in UTC. `null` before the first one |
 
@@ -232,7 +252,7 @@ When sending goes wrong, the package logs:
 
 - `error` when Bump refuses a batch (400, 401, 403) with the API's error code and message, when `BUMP_URL` answers with a redirect (never followed), when a batch can't be queued, and when retries run out
 - `warning` for each event Bump rejects, with the field and the reason
-- `warning` for a call the package drops itself: an unsaved model, a handle or id that's too long, two lists, text that isn't valid UTF-8
+- `warning` for a call the package drops itself: an unsaved model, a handle or id that's too long, two lists, an amount with more than 2 decimals, `amount` and `cents` together, text that isn't valid UTF-8
 - `warning` when a job attempt fails and goes back on the queue: its events are dropped, because the next attempt records them again
 
 Connection errors, 5xx and 429 are retried, waiting for `Retry-After` when Bump sends one, up to 15 minutes. Queued batches retry 5 times over about half an hour; sync delivery retries twice and waits at most 10 seconds at a time. Every event carries an id, so a retried batch never counts twice.
@@ -269,7 +289,7 @@ class OrdersBackfill implements Backfill
                 'id' => "orders-{$row->id}",
                 'trackable' => 'orders',
                 'identifiable' => $row->user,
-                'amount' => $row->total,
+                'cents' => $row->total_cents,
                 'occurred_at' => $row->paid_at,
             ];
         }
@@ -277,7 +297,7 @@ class OrdersBackfill implements Backfill
 }
 ```
 
-Events are in the API's item shape. To change what the command generates, publish its stub with `php artisan vendor:publish --tag=bump-stubs` and edit `stubs/bump-backfill.stub`.
+Events are in the API's item shape. `amount` and `cents` take what `amount:` and `cents:` take on `track()`, one of the two, and go out as an amount with two decimals. To change what the command generates, publish its stub with `php artisan vendor:publish --tag=bump-stubs` and edit `stubs/bump-backfill.stub`.
 
 Live events without `id:` carry ids the package makes up, so Bump can't match them to the same events sent again with ids from your data. A backfill that sends anything from after live counting started counts it twice.
 
@@ -329,7 +349,7 @@ test('paying an order tracks it', function () {
 
 Also there: `assertTrackedTimes('orders', 2)`, `assertNothingTracked()`, and `tracked('orders')` for a collection of calls. For `forget()`: `assertForgotten($user)`, `assertNotForgotten($user)` and `forgotten()` for the handles. The fake records with or without a token, and with `BUMP_ENABLED` off.
 
-The callback gets a `TrackedEvent` per call: `trackable`, `identifiables`, `count`, `amount`, `occurredAt`, `note`, `activity`, `adjustment` and `id`. Models are resolved to handles like in real delivery, and a call real delivery would drop, an unsaved model for example, is dropped here too: the failing assertion says why. `adjust()` calls count as tracked, with `adjustment` true and their defaults filled in. A field the call leaves out is `null`, and so is `id` when the package makes one up.
+The callback gets a `TrackedEvent` per call: `trackable`, `identifiables`, `count`, `amount`, `cents`, `occurredAt`, `note`, `activity`, `adjustment` and `id`. `amount` and `cents` are what the call passed, so `amount: 49.9` is `49.9` there, not the `"49.90"` that is sent. Models are resolved to handles like in real delivery, and a call real delivery would drop, an unsaved model or an amount with 3 decimals for example, is dropped here too: the failing assertion says why. `adjust()` calls count as tracked, with `adjustment` true and their defaults filled in. A field the call leaves out is `null`, and so is `id` when the package makes one up.
 
 For code that reads totals, tell the fake what `total()` returns:
 
@@ -337,7 +357,7 @@ For code that reads totals, tell the fake what `total()` returns:
 Bump::fake()->withTotal('orders', count: 3, amount: 59.94);
 ```
 
-The amount becomes the API's two-decimal string, so `59.9` is `"59.90"`, and one with more decimals throws. The fake returns the total with or without a token and with `BUMP_ENABLED` off. A trackable you didn't set throws the same `BumpException` as a handle Bump doesn't know: `status` 404, `errorCode` `resource_missing`. Without the fake, `total()` throws in tests, since `BUMP_ENABLED` is off there.
+The amount becomes the API's two-decimal string, so `59.9` is `"59.90"` and `cents` is `5990`. An amount with more decimals throws. The fake returns the total with or without a token and with `BUMP_ENABLED` off. A trackable you didn't set throws the same `BumpException` as a handle Bump doesn't know: `status` 404, `errorCode` `resource_missing`. Without the fake, `total()` throws in tests, since `BUMP_ENABLED` is off there.
 
 ## Known limits
 
@@ -345,7 +365,7 @@ The amount becomes the API's two-decimal string, so `59.9` is `"59.90"`, and one
 - Adding prefixed IDs to a model later changes its handle from `user_12` to `usr_3f9a…`, and its totals start again under the new one. If the model already has live events, set `BUMP_HANDLES=key` or give it a `bumpHandle()` first.
 - `APP_ENV` must be exactly `production` to use the live token. `prod` or `live` use the test token.
 - Mass updates and deletes (`Order::where(...)->update(...)`) skip Eloquent model events, so tracking done in observers or model events won't happen for them. Call `Bump::track()` or `Bump::adjust()` next to those queries.
-- A single call whose `count` or `amount` list holds more than 100 values is dropped with a warning: the API takes at most 100 events per request.
+- A single call whose `count`, `amount` or `cents` list holds more than 100 values is dropped with a warning: the API takes at most 100 events per request.
 
 ## AI agents
 

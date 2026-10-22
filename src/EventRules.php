@@ -16,7 +16,7 @@ final class EventRules
     /**
      * @throws InvalidArgumentException with the reason the event can't be sent
      */
-    public static function check(?string $id, mixed $count, mixed $amount): void
+    public static function check(?string $id, mixed $count, mixed $amount, mixed $cents): void
     {
         if ($id === '') {
             throw new InvalidArgumentException('The event id is empty.');
@@ -32,6 +32,26 @@ final class EventRules
 
         if (is_array($count) && is_array($amount)) {
             throw new InvalidArgumentException("count and amount can't both be lists.");
+        }
+
+        self::checkCents($count, $amount, $cents);
+    }
+
+    /**
+     * @throws InvalidArgumentException with the reason the event can't be sent
+     */
+    public static function checkCents(mixed $count, mixed $amount, mixed $cents): void
+    {
+        if ($cents === null) {
+            return;
+        }
+
+        if ($amount !== null) {
+            throw new InvalidArgumentException("amount and cents can't both be given.");
+        }
+
+        if (is_array($count) && is_array($cents)) {
+            throw new InvalidArgumentException("count and cents can't both be lists.");
         }
     }
 

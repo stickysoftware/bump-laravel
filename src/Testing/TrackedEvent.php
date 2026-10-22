@@ -17,7 +17,8 @@ final readonly class TrackedEvent
      *
      * @param  list<mixed>  $identifiables  handles as sent: a string, or a handle and label map
      * @param  int|list<int>|null  $count
-     * @param  int|float|string|list<int|float|string>|null  $amount
+     * @param  int|float|string|list<int|float|string>|null  $amount  as the call passed it
+     * @param  int|list<int>|null  $cents
      */
     public function __construct(
         public string $trackable,
@@ -29,6 +30,7 @@ final readonly class TrackedEvent
         public ?bool $activity,
         public bool $adjustment,
         public ?string $id = null,
+        public int|array|null $cents = null,
     ) {}
 
     public function hasIdentifiable(Model|string $identifiable): bool

@@ -21,6 +21,7 @@ final class Tracker
     /**
      * @param  int|list<int>|null  $count
      * @param  int|float|string|list<int|float|string>|null  $amount
+     * @param  int|list<int>|null  $cents
      */
     public function track(
         string $trackable,
@@ -31,13 +32,15 @@ final class Tracker
         ?string $note = null,
         ?bool $activity = null,
         ?string $id = null,
+        int|array|null $cents = null,
     ): void {
-        $this->record($trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity ?? $this->defaultActivity(), $id);
+        $this->record($trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity ?? $this->defaultActivity(), $id, $cents);
     }
 
     /**
      * @param  int|list<int>|null  $count
      * @param  int|float|string|list<int|float|string>|null  $amount
+     * @param  int|list<int>|null  $cents
      */
     public function adjust(
         string $trackable,
@@ -48,8 +51,9 @@ final class Tracker
         ?string $note = null,
         ?bool $activity = false,
         ?string $id = null,
+        int|array|null $cents = null,
     ): void {
-        $this->record($trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity, $id);
+        $this->record($trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity, $id, $cents);
     }
 
     /**
@@ -106,6 +110,7 @@ final class Tracker
     /**
      * @param  int|list<int>|null  $count
      * @param  int|float|string|list<int|float|string>|null  $amount
+     * @param  int|list<int>|null  $cents
      */
     private function record(
         string $trackable,
@@ -116,13 +121,16 @@ final class Tracker
         ?string $note,
         ?bool $activity,
         ?string $id,
+        int|array|null $cents,
     ): void {
         try {
             if (! $this->enabled()) {
                 return;
             }
 
-            EventRules::check($id, $count, $amount);
+            EventRules::check($id, $count, $amount, $cents);
+
+            $amount = $cents === null ? Amounts::encode($amount) : Amounts::fromCents($cents);
 
             // A count or amount list keeps the id as given: the API derives "{id}:0", "{id}:1" per value.
             $event = array_filter([

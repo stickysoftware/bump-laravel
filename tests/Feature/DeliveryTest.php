@@ -387,18 +387,18 @@ describe('sync delivery', function () {
         Http::fake(['*' => Http::response(['object' => 'list', 'data' => [
             ['object' => 'event', 'id' => 'evt_1', 'status' => 'accepted'],
             ['object' => 'event', 'id' => 'evt_2', 'status' => 'duplicate'],
-            ['object' => 'event', 'status' => 'rejected', 'error' => ['type' => 'invalid_request_error', 'code' => 'parameter_invalid', 'message' => 'Amounts take at most 2 decimals.', 'param' => 'events[1].amount']],
+            ['object' => 'event', 'status' => 'rejected', 'error' => ['type' => 'invalid_request_error', 'code' => 'parameter_invalid', 'message' => 'amount takes a string with two decimals, like "49.99".', 'param' => 'events[1].amount']],
         ]])]);
         Log::spy();
 
         Bump::track('orders', count: [1, 1]);
-        Bump::track('refunds', amount: 1.005);
+        Bump::track('refunds', amount: 2500);
         Bump::flush();
 
         Log::shouldHaveReceived('warning')->once()->withArgs(fn (string $message, array $context) => $message === 'Bump rejected an event.'
             && $context['trackable'] === 'refunds'
             && $context['param'] === 'events[1].amount'
-            && $context['message'] === 'Amounts take at most 2 decimals.');
+            && $context['message'] === 'amount takes a string with two decimals, like "49.99".');
     });
 
     it('retries a 200 that is not the API answering', function () {

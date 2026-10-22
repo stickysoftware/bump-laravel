@@ -7,10 +7,12 @@ This app sends events to Bump with `stickysoftware/bump-laravel`. Bump keeps exa
 - Call `Bump::track()` (facade `StickySoftware\Bump\Facades\Bump`) where the thing happens: an order is paid, a member joins. Calls are buffered and sent once per request, command or job. They never throw into the app.
 - Use `Bump::adjust()` for corrections: refunds, removals, fixes. It sends `count: 0` and `activity: false` unless you pass them, so it changes totals without counting a new occurrence or an active user.
 - Trackable handles are lowercase `[a-z0-9_.-]`, max 64 characters, plural nouns: `orders`, `members`.
-- `count` defaults to 1 and `amount` to 0 on the server. Pass both when both matter: an order is one order and an amount. Amounts take at most 2 decimals, in the project currency.
+- `count` defaults to 1 and `amount` to 0 on the server. Pass both when both matter: an order is one order and an amount.
+- Amounts are in the project currency. Pass a decimal as `amount:` (a float or a string, at most 2 decimals: `49.99`, `'49.99'`), or whole cents as `cents:` (an int: `cents: $order->total_cents`, a Cashier amount). Never both in one call.
+- Never pass an int to `amount:`: it's sent as it is and Bump refuses it, since it could be cents. Use `cents:` for cents, and `50.0` or `'50.00'` for a whole amount. Never round an amount to fit: a third decimal drops the call.
 - Totals are additive. Never send a new total; send the difference, negative when it goes down.
 - Pass `id:` when the same thing can be tracked twice: a webhook delivered again, a job that runs twice. Derive it from the app's own data (`order-1042`), max 64 characters. One id per event: a refund gets its own (`refund-77`), never the order's. Without `id:` the package generates a UUID per call.
-- `count` and `amount` can't both be lists in one call; the package drops that call.
+- `count` and `amount` (or `cents`) can't both be lists in one call; the package drops that call.
 
 @boostsnippet('Track and adjust', 'php')
 use StickySoftware\Bump\Facades\Bump;
@@ -35,7 +37,7 @@ Bump::adjust('orders', identifiable: $order->user, amount: -25.00, note: 'partia
 
 ## Reading totals
 
-- `Bump::total('orders')` returns a `StickySoftware\Bump\Total` with the trackable's totals for the whole project: `count` (int), `amount` (string with two decimals in the project currency, `"59.94"`), `currency` and `lastEventAt` (`?CarbonImmutable`, UTC). Keep `amount` a string; don't cast it to float.
+- `Bump::total('orders')` returns a `StickySoftware\Bump\Total` with the trackable's totals for the whole project: `count` (int), `amount` (string with two decimals in the project currency, `"59.94"`), `cents` (the same amount as an int, `5994`), `currency` and `lastEventAt` (`?CarbonImmutable`, UTC). Keep `amount` a string, or use `cents` for math; don't cast `amount` to float.
 - Read on a schedule, in a scheduled command, and store the number with `Cache::forever()` or in the database. Pages show the stored number. Never call `total()` while rendering a page: the page would wait on Bump.
 - Unlike `track()`, `total()` throws: `StickySoftware\Bump\Exceptions\BumpException` with `status`, `errorCode` and `retryAfter`. In the scheduled command, let it fail so the last stored number stays.
 - The token needs "Can read totals", set when it's created. One token sends and reads.
@@ -81,7 +83,7 @@ Schedule::command('orders:count')->hourly();
 ## Backfill
 
 - To import history, generate a class per kind of history with `php artisan make:bump-backfill OrdersBackfill` (it writes `app/Bump/OrdersBackfill.php`), fill it in, and run `php artisan bump:backfill "App\Bump\OrdersBackfill" "App\Bump\RefundsBackfill" --until="<Tracking since>"`.
-- Generate backfill classes, don't write them from scratch. In the generated class, replace the `App\Models\Model` placeholder with the real model and `created_at` with the column the event happened at, check the trackable, and add `identifiable`, `count` or `amount` where they apply.
+- Generate backfill classes, don't write them from scratch. In the generated class, replace the `App\Models\Model` placeholder with the real model and `created_at` with the column the event happened at, check the trackable, and add `identifiable`, `count`, and `amount` or `cents` where they apply. `amount` and `cents` follow the same rules as on `track()`.
 - `--until` is when live counting began: copy Tracking since from Developers > Events in the project's live environment in Bump, and pass it as is (it carries its offset). Never guess it and never use now: events after it were already counted live, under ids that don't match, so Bump counts them twice.
 - Always constrain the query with the window: `$window->constrain($query, 'paid_at')`. It keeps rows before `until` and, with `--since`, from `since` on. Use `$window->until` and `$window->since` (app timezone) for queries it doesn't fit.
 - Every event needs an `id` derived from the app's own data (`orders-1042`, `refunds-77`), max 64 characters. Never a random UUID: the same id makes a rerun skip what was already sent.
@@ -107,7 +109,7 @@ class OrdersBackfill implements Backfill
                 'id' => "orders-{$row->id}",
                 'trackable' => 'orders',
                 'identifiable' => $row->user,
-                'amount' => $row->total,
+                'cents' => $row->total_cents,
                 'occurred_at' => $row->paid_at,
             ];
         }
@@ -117,7 +119,7 @@ class OrdersBackfill implements Backfill
 
 ## Testing
 
-- In feature tests that track, call `Bump::fake()` first, then assert with `Bump::assertTracked()`, `assertTrackedTimes()`, `assertNotTracked()` or `assertNothingTracked()`. Callbacks get a `StickySoftware\Bump\Testing\TrackedEvent`. For `forget()`, use `Bump::assertForgotten()` and `assertNotForgotten()`.
+- In feature tests that track, call `Bump::fake()` first, then assert with `Bump::assertTracked()`, `assertTrackedTimes()`, `assertNotTracked()` or `assertNothingTracked()`. Callbacks get a `StickySoftware\Bump\Testing\TrackedEvent`; its `amount` and `cents` are what the call passed. For `forget()`, use `Bump::assertForgotten()` and `assertNotForgotten()`.
 - Use `Bump::fake()`, never `Bump::shouldReceive()`.
 - `BUMP_ENABLED` is off by default under `APP_ENV=testing`, so tests never reach Bump. `<env name="BUMP_ENABLED" value="false"/>` in `phpunit.xml` is the explicit form.
 

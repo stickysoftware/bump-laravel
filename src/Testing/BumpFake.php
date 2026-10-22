@@ -12,6 +12,7 @@ use Illuminate\Support\Str;
 use Illuminate\Support\Testing\Fakes\Fake;
 use InvalidArgumentException;
 use PHPUnit\Framework\Assert as PHPUnit;
+use StickySoftware\Bump\Amounts;
 use StickySoftware\Bump\Batch;
 use StickySoftware\Bump\EventRules;
 use StickySoftware\Bump\Exceptions\BumpException;
@@ -43,6 +44,7 @@ final class BumpFake implements Fake
     /**
      * @param  int|list<int>|null  $count
      * @param  int|float|string|list<int|float|string>|null  $amount
+     * @param  int|list<int>|null  $cents
      */
     public function track(
         string $trackable,
@@ -53,13 +55,15 @@ final class BumpFake implements Fake
         ?string $note = null,
         ?bool $activity = null,
         ?string $id = null,
+        int|array|null $cents = null,
     ): void {
-        $this->record(false, $trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity, $id);
+        $this->record(false, $trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity, $id, $cents);
     }
 
     /**
      * @param  int|list<int>|null  $count
      * @param  int|float|string|list<int|float|string>|null  $amount
+     * @param  int|list<int>|null  $cents
      */
     public function adjust(
         string $trackable,
@@ -70,8 +74,9 @@ final class BumpFake implements Fake
         ?string $note = null,
         ?bool $activity = false,
         ?string $id = null,
+        int|array|null $cents = null,
     ): void {
-        $this->record(true, $trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity, $id);
+        $this->record(true, $trackable, $identifiable, $count, $amount, $occurredAt, $note, $activity, $id, $cents);
     }
 
     public function flush(): void {}
@@ -216,6 +221,7 @@ final class BumpFake implements Fake
     /**
      * @param  int|list<int>|null  $count
      * @param  int|float|string|list<int|float|string>|null  $amount
+     * @param  int|list<int>|null  $cents
      */
     private function record(
         bool $adjustment,
@@ -227,9 +233,17 @@ final class BumpFake implements Fake
         ?string $note,
         ?bool $activity,
         ?string $id,
+        int|array|null $cents,
     ): void {
         try {
-            EventRules::check($id, $count, $amount);
+            EventRules::check($id, $count, $amount, $cents);
+
+            // Only to drop what real delivery drops: TrackedEvent keeps the amount as the call passed it.
+            if ($cents === null) {
+                Amounts::encode($amount);
+            } else {
+                Amounts::fromCents($cents);
+            }
 
             $identifiables = Identifiables::normalize($identifiable);
 
@@ -242,7 +256,7 @@ final class BumpFake implements Fake
                 return;
             }
 
-            $size = Batch::size(['count' => $count, 'amount' => $amount]);
+            $size = Batch::size(['count' => $count, 'amount' => $amount, 'cents' => $cents]);
 
             if ($size > Batch::MAX_EVENTS) {
                 $reason = "Bump dropped an event with {$size} values: a request takes at most ".Batch::MAX_EVENTS.'.';
@@ -267,6 +281,7 @@ final class BumpFake implements Fake
                 activity: $activity,
                 adjustment: $adjustment,
                 id: $id,
+                cents: $cents,
             );
         } catch (Throwable $e) {
             Log::warning('Bump dropped an event it could not record.', [

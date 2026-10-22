@@ -8,6 +8,7 @@ use DateTimeInterface;
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
+use StickySoftware\Bump\Amounts;
 use StickySoftware\Bump\Api;
 use StickySoftware\Bump\Backfill\BackfillWindow;
 use StickySoftware\Bump\Batch;
@@ -319,6 +320,12 @@ class BackfillCommand extends Command
 
         $event['id'] = (string) $id;
 
+        try {
+            $event = $this->amount($event);
+        } catch (InvalidArgumentException $e) {
+            return $e->getMessage();
+        }
+
         if (array_key_exists('identifiable', $event)) {
             try {
                 $event['identifiable'] = Identifiables::normalize($event['identifiable']);
@@ -347,6 +354,28 @@ class BackfillCommand extends Command
 
         if (! EventRules::validUtf8($event)) {
             return "The event has text that isn't valid UTF-8.";
+        }
+
+        return $event;
+    }
+
+    /**
+     * @param  array<string, mixed>  $event
+     * @return array<string, mixed>
+     *
+     * @throws InvalidArgumentException with the reason the event can't be sent
+     */
+    private function amount(array $event): array
+    {
+        $cents = $event['cents'] ?? null;
+        unset($event['cents']);
+
+        EventRules::checkCents($event['count'] ?? null, $event['amount'] ?? null, $cents);
+
+        if ($cents !== null) {
+            $event['amount'] = Amounts::fromCents($cents);
+        } elseif (array_key_exists('amount', $event)) {
+            $event['amount'] = Amounts::encode($event['amount']);
         }
 
         return $event;

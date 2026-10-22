@@ -37,7 +37,7 @@ it('tracks and adjusts', function () {
 
     Bump::track('e2e', identifiable: [new Team(['id' => 9001, 'name' => 'E2E test team']), 'e2e_user_1'], amount: 49.99, id: $id);
     Bump::track('e2e', identifiable: 'e2e_user_1', count: [1, 2]);
-    Bump::adjust('e2e', identifiable: 'e2e_user_1', amount: -25.00, note: 'partial refund');
+    Bump::adjust('e2e', identifiable: 'e2e_user_1', note: 'partial refund', cents: -2500);
     Bump::track('e2e', identifiable: 'e2e_user_1', amount: 49.99, id: $id);
     Bump::flush();
 
@@ -47,8 +47,8 @@ it('tracks and adjusts', function () {
 
 it('backfills, and a rerun only finds duplicates', function () {
     $events = fn () => [
-        ['id' => 'e2e-order-1', 'trackable' => 'e2e_backfill', 'identifiable' => 'e2e_user_1', 'amount' => 10, 'occurred_at' => now()->subDays(40)],
-        ['id' => 'e2e-order-2', 'trackable' => 'e2e_backfill', 'identifiable' => 'e2e_user_2', 'amount' => 20, 'occurred_at' => now()->subDays(20)],
+        ['id' => 'e2e-order-1', 'trackable' => 'e2e_backfill', 'identifiable' => 'e2e_user_1', 'amount' => 10.0, 'occurred_at' => now()->subDays(40)],
+        ['id' => 'e2e-order-2', 'trackable' => 'e2e_backfill', 'identifiable' => 'e2e_user_2', 'cents' => 2000, 'occurred_at' => now()->subDays(20)],
         ['id' => 'e2e-order-3', 'trackable' => 'e2e_backfill', 'amount' => 30.5, 'occurred_at' => now()->subDays(2)],
     ];
 
@@ -94,6 +94,7 @@ it('reads the totals of a trackable', function () {
     expect($total->handle)->toBe('e2e')
         ->and($total->count)->toBeGreaterThan(0)
         ->and($total->amount)->toMatch('/^-?\d+\.\d{2}$/')
+        ->and($total->cents)->toBe((int) str_replace('.', '', $total->amount))
         ->and($total->currency)->not->toBe('')
         ->and($total->lastEventAt)->not->toBeNull();
 })->group('end-to-end');

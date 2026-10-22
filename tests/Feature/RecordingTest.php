@@ -58,7 +58,7 @@ it('sends every argument the call passes', function () {
         'trackable' => 'orders',
         'identifiable' => 'usr_1',
         'count' => [1, 2],
-        'amount' => 49.99,
+        'amount' => '49.99',
         'occurred_at' => '2026-10-02T14:03:11+02:00',
         'note' => 'first order',
         'activity' => true,
@@ -131,6 +131,154 @@ it('drops an event whose count and amount are both lists, which the API rejects'
     ]);
 });
 
+describe('amounts', function () {
+    it('sends a float or a decimal string as a string with two decimals', function (float|string $amount, string $sent) {
+        Bump::track('orders', amount: $amount);
+        Bump::flush();
+
+        expect(sentEvents()[0]['amount'])->toBe($sent);
+    })->with([
+        [49.99, '49.99'],
+        [149.0, '149.00'],
+        [-25.0, '-25.00'],
+        [0.07, '0.07'],
+        [-0.0, '0.00'],
+        'float noise' => [59.97000000000001, '59.97'],
+        '19.99 * 3' => [19.99 * 3, '59.97'],
+        '0.1 + 0.2' => [0.1 + 0.2, '0.30'],
+        'one decimal' => ['49.9', '49.90'],
+        'two decimals' => ['49.99', '49.99'],
+        'negative' => ['-0.5', '-0.50'],
+        'trailing zeros from a decimal(10,4) column' => ['49.9900', '49.99'],
+        'a whole float too large for Bump' => [1e15, '1000000000000000.00'],
+    ]);
+
+    it('sends an int, or text without decimals, untouched for Bump to refuse, since it could be cents', function (int|string $amount) {
+        Log::spy();
+
+        Bump::track('orders', amount: $amount);
+        Bump::flush();
+
+        expect(sentEvents()[0]['amount'])->toBe($amount);
+        Log::shouldNotHaveReceived('warning');
+    })->with([
+        'an int' => [5000],
+        'a negative int' => [-2500],
+        'text without decimals' => ['50'],
+        'not a number' => ['49,99'],
+    ]);
+
+    it('converts a list value by value', function () {
+        Bump::track('orders', amount: [10.5, '20', 5, 0.1 + 0.2, '7.5']);
+        Bump::flush();
+
+        expect(sentEvents()[0]['amount'])->toBe(['10.50', '20', 5, '0.30', '7.50']);
+    });
+
+    it('drops an amount Bump would have to round, with a warning, and never rounds it', function (mixed $amount, string $reason) {
+        Log::spy();
+
+        Bump::track('orders', amount: $amount);
+        Bump::track('orders', amount: 49.99);
+        Bump::flush();
+
+        expect(array_column(sentEvents(), 'amount'))->toBe(['49.99']);
+        Log::shouldHaveReceived('warning')->once()->with('Bump dropped an event it could not record.', [
+            'trackable' => 'orders',
+            'exception' => $reason,
+        ]);
+    })->with([
+        'a third decimal' => [49.999, 'Amounts take at most 2 decimals, got 49.999.'],
+        'a third decimal as text' => ['49.995', "Amounts take at most 2 decimals, got '49.995'."],
+        'a tiny float' => [0.00001, 'Amounts take at most 2 decimals, got 1.0E-5.'],
+        'one value in a list' => [[10.5, 1.005], 'Amounts take at most 2 decimals, got 1.005.'],
+        'infinity' => [INF, 'amount takes a number like 49.99, got INF.'],
+    ]);
+
+    it('sends the amount as a JSON string, never a number', function () {
+        Bump::track('orders', amount: 149.0, id: 'order-1');
+        Bump::adjust('orders', cents: -2500, id: 'refund-1');
+        Bump::flush();
+
+        Http::assertSent(function (Request $request) {
+            $body = $request->body();
+
+            return str_contains($body, '"id":"order-1","trackable":"orders","amount":"149.00"')
+                && str_contains($body, '"id":"refund-1","trackable":"orders","count":0,"amount":"-25.00"')
+                && ! str_contains($body, 'cents');
+        });
+    });
+});
+
+describe('cents', function () {
+    it('sends cents as an amount with two decimals, in integer math', function (int $cents, string $sent) {
+        Bump::track('orders', cents: $cents);
+        Bump::flush();
+
+        expect(sentEvents()[0]['amount'])->toBe($sent)
+            ->and(sentEvents()[0])->not->toHaveKey('cents');
+    })->with([
+        [4999, '49.99'],
+        [100, '1.00'],
+        [7, '0.07'],
+        [-5, '-0.05'],
+        [-2500, '-25.00'],
+        [0, '0.00'],
+        'the largest int' => [PHP_INT_MAX, '92233720368547758.07'],
+        'the smallest int' => [PHP_INT_MIN, '-92233720368547758.08'],
+    ]);
+
+    it('takes cents on adjust() too', function () {
+        Bump::adjust('orders', identifiable: 'usr_1', note: 'refund', cents: -2500);
+        Bump::flush();
+
+        expect(sentEvents()[0])->toMatchArray(['count' => 0, 'amount' => '-25.00', 'activity' => false]);
+    });
+
+    it('sends a cents list as an amount list, with the id unchanged', function () {
+        Bump::track('orders', cents: [4999, -5], id: 'cart-77');
+        Bump::flush();
+
+        expect(sentEvents()[0])->toMatchArray(['id' => 'cart-77', 'amount' => ['49.99', '-0.05']]);
+    });
+
+    it('keeps the positions of 1.x, with cents last', function () {
+        Bump::track('orders', 'usr_1', 2, 49.99, Carbon::parse('2026-10-02T14:03:11+02:00'), 'first order', true, 'order-1');
+        Bump::track('orders', 'usr_1', 1, null, null, null, null, 'order-2', 4999);
+        Bump::flush();
+
+        expect(sentEvents()[0])->toMatchArray(['id' => 'order-1', 'identifiable' => 'usr_1', 'count' => 2, 'amount' => '49.99', 'note' => 'first order', 'activity' => true])
+            ->and(sentEvents()[1])->toMatchArray(['id' => 'order-2', 'amount' => '49.99']);
+    });
+
+    it('drops a call Bump could not read, with a warning', function (array $arguments, string $reason) {
+        Log::spy();
+
+        Bump::track(...['trackable' => 'orders', ...$arguments]);
+        Bump::flush();
+
+        Http::assertNothingSent();
+        Log::shouldHaveReceived('warning')->once()->with('Bump dropped an event it could not record.', [
+            'trackable' => 'orders',
+            'exception' => $reason,
+        ]);
+    })->with([
+        'amount and cents' => [['amount' => 49.99, 'cents' => 4999], "amount and cents can't both be given."],
+        'a count list and a cents list' => [['count' => [1, 2], 'cents' => [100, 200]], "count and cents can't both be lists."],
+        'a value that is not a whole number' => [['cents' => [4999, 49.99]], 'cents takes whole numbers, got float.'],
+    ]);
+
+    it('counts a cents list toward the 100 events per request', function () {
+        Log::spy();
+
+        Bump::track('orders', cents: array_fill(0, 101, 1));
+        Bump::flush();
+
+        Http::assertNothingSent();
+        Log::shouldHaveReceived('warning')->once()->with('Bump dropped an event with 101 values: a request takes at most 100.', ['trackable' => 'orders']);
+    });
+});
+
 it('takes the time when the call happens, not when the buffer is sent', function () {
     Carbon::setTestNow('2026-10-15 12:00:00');
     Bump::track('orders');
@@ -147,7 +295,7 @@ it('defaults adjust to no count and no activity', function () {
 
     expect(sentEvents()[0])->toMatchArray([
         'count' => 0,
-        'amount' => -25.0,
+        'amount' => '-25.00',
         'activity' => false,
         'note' => 'refund',
     ]);
