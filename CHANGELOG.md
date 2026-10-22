@@ -2,6 +2,14 @@
 
 All notable changes to `stickysoftware/bump-laravel` are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 1.1.0 - Unreleased
+
+- `Bump::total()` reads one trackable's totals for the whole project. It needs a token made with **Can read totals**.
+- `StickySoftware\Bump\Total` holds them: `handle`, `count`, `amount` (a string with two decimals, like `"59.94"`), `currency` and `lastEventAt`.
+- A failed read throws `StickySoftware\Bump\Exceptions\BumpException`, with `status`, `errorCode` and `retryAfter`. Sending still never throws.
+- `withTotal()` on `Bump::fake()` sets what `total()` returns in tests.
+- `BUMP_SYNC_TIMEOUT` also limits a read.
+
 ## 1.0.0 - 2026-10-22
 
 First public release.

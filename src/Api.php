@@ -2,17 +2,20 @@
 
 namespace StickySoftware\Bump;
 
+use Carbon\CarbonImmutable;
 use Composer\InstalledVersions;
 use DateTimeImmutable;
 use DateTimeZone;
 use GuzzleHttp\Psr7\Exception\MalformedUriException;
 use GuzzleHttp\Psr7\Uri;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use StickySoftware\Bump\Exceptions\BumpException;
 use Throwable;
 
 /**
@@ -182,6 +185,57 @@ final class Api
     }
 
     /**
+     * @throws BumpException
+     */
+    public function total(string $trackable, int $timeout): Total
+    {
+        $token = $this->token();
+
+        if ($token === null) {
+            throw new BumpException('Set '.$this->tokenVariable().' to read totals.');
+        }
+
+        $refusal = $this->urlRefusal();
+
+        if ($refusal !== null) {
+            throw new BumpException($refusal);
+        }
+
+        try {
+            $response = $this->request($token)->timeout($timeout)->get($this->url('trackables'), ['handle' => $trackable]);
+        } catch (ConnectionException $e) {
+            throw new BumpException("Couldn't reach Bump: ".self::redact($e->getMessage(), $token));
+        }
+
+        $status = $response->status();
+
+        if ($response->successful()) {
+            return $this->trackable($response)
+                ?? throw new BumpException("Bump answered with something that isn't a trackable.", $status);
+        }
+
+        if ($response->redirect()) {
+            throw new BumpException('BUMP_URL answered with a redirect, which is never followed.', $status);
+        }
+
+        $retryAfter = $status === 429 ? $this->retryAfterSeconds($response) : null;
+        $message = $response->json('error.message');
+
+        if (is_string($message) && $message !== '') {
+            $code = $response->json('error.code');
+
+            throw new BumpException(
+                'Bump refused the read: '.self::redact($message, $token),
+                $status,
+                is_string($code) ? $code : null,
+                $retryAfter,
+            );
+        }
+
+        throw new BumpException("Bump answered {$status}.", $status, retryAfter: $retryAfter);
+    }
+
+    /**
      * Tests reset the once-per-process log line.
      */
     public static function forgetReportedWarnings(): void
@@ -196,8 +250,7 @@ final class Api
      */
     private function post(#[\SensitiveParameter] string $token, string $path, array $body, ?int $timeout): Response|SendResult
     {
-        // No redirects: the https check vets BUMP_URL, not where it redirects to.
-        $request = Http::withToken($token)->withUserAgent(self::userAgent())->acceptJson()->withoutRedirecting();
+        $request = $this->request($token);
 
         if ($timeout !== null) {
             $request->timeout($timeout);
@@ -216,6 +269,59 @@ final class Api
         $this->logSlow($startedAt, $timeout);
 
         return $response;
+    }
+
+    private function request(#[\SensitiveParameter] string $token): PendingRequest
+    {
+        // No redirects: the https check vets BUMP_URL, not where it redirects to.
+        return Http::withToken($token)->withUserAgent(self::userAgent())->acceptJson()->withoutRedirecting();
+    }
+
+    private function trackable(Response $response): ?Total
+    {
+        $body = $response->json();
+
+        if (! is_array($body) || ($body['object'] ?? null) !== 'trackable' || ! array_key_exists('last_event_at', $body)) {
+            return null;
+        }
+
+        $handle = $body['handle'] ?? null;
+        $count = $body['count'] ?? null;
+        $amount = $body['amount'] ?? null;
+        $currency = $body['currency'] ?? null;
+        $lastEventAt = self::timestamp($body['last_event_at']);
+
+        if (! is_string($handle)
+            || ! is_int($count)
+            || ! is_string($amount) || preg_match('/^-?\d+\.\d{2}$/', $amount) !== 1
+            || ! is_string($currency) || $currency === ''
+            || ($body['last_event_at'] !== null && $lastEventAt === null)
+        ) {
+            return null;
+        }
+
+        return new Total($handle, $count, $amount, $currency, $lastEventAt);
+    }
+
+    private static function timestamp(mixed $value): ?CarbonImmutable
+    {
+        if (! is_string($value) || ! preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/', $value)) {
+            return null;
+        }
+
+        try {
+            return CarbonImmutable::parse($value)->utc();
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Text from the other side goes into an exception message, and those end up in logs and error trackers.
+     */
+    private static function redact(string $text, #[\SensitiveParameter] string $token): string
+    {
+        return str_replace($token, '[token]', $text);
     }
 
     /**
@@ -320,9 +426,19 @@ final class Api
     }
 
     /**
-     * Seconds or an HTTP date, capped at MAX_RETRY_AFTER. Anything else falls back to the package's own backoff.
+     * Capped at MAX_RETRY_AFTER. Without a readable one, the package falls back to its own backoff.
      */
     private function retryAfter(Response $response): ?int
+    {
+        $seconds = $this->retryAfterSeconds($response);
+
+        return $seconds === null ? null : min($seconds, self::MAX_RETRY_AFTER);
+    }
+
+    /**
+     * Seconds or an HTTP date. A number too long for an int reads as PHP_INT_MAX.
+     */
+    private function retryAfterSeconds(Response $response): ?int
     {
         $header = trim($response->header('Retry-After'));
 
@@ -331,10 +447,9 @@ final class Api
         }
 
         if (ctype_digit($header)) {
-            // Compared as text first: a long number overflows an int.
-            return strlen(ltrim($header, '0')) > strlen((string) self::MAX_RETRY_AFTER)
-                ? self::MAX_RETRY_AFTER
-                : min((int) $header, self::MAX_RETRY_AFTER);
+            $seconds = filter_var(ltrim($header, '0') ?: '0', FILTER_VALIDATE_INT);
+
+            return $seconds === false ? PHP_INT_MAX : $seconds;
         }
 
         $date = DateTimeImmutable::createFromFormat('!D, d M Y H:i:s \G\M\T', $header, new DateTimeZone('UTC'));
@@ -343,7 +458,7 @@ final class Api
             return null;
         }
 
-        return min(max(0, $date->getTimestamp() - Carbon::now()->getTimestamp()), self::MAX_RETRY_AFTER);
+        return max(0, $date->getTimestamp() - Carbon::now()->getTimestamp());
     }
 
     public static function events(int $count): string

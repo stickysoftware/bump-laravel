@@ -10,15 +10,18 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Support\Testing\Fakes\Fake;
+use InvalidArgumentException;
 use PHPUnit\Framework\Assert as PHPUnit;
 use StickySoftware\Bump\Batch;
 use StickySoftware\Bump\EventRules;
+use StickySoftware\Bump\Exceptions\BumpException;
 use StickySoftware\Bump\Identifiables;
+use StickySoftware\Bump\Total;
 use Throwable;
 
 /**
  * Records with or without a token or BUMP_ENABLED. A call real delivery would drop is dropped here
- * too, with the same warning.
+ * too, with the same warning. total() answers what withTotal() set, and throws like a 404 otherwise.
  */
 final class BumpFake implements Fake
 {
@@ -33,6 +36,9 @@ final class BumpFake implements Fake
 
     /** @var list<string> */
     private array $droppedForgets = [];
+
+    /** @var array<string, Total> */
+    private array $totals = [];
 
     /**
      * @param  int|list<int>|null  $count
@@ -79,6 +85,37 @@ final class BumpFake implements Fake
 
             $this->droppedForgets[] = $e->getMessage();
         }
+    }
+
+    public function withTotal(
+        string $trackable,
+        int $count = 0,
+        int|float|string $amount = 0,
+        string $currency = 'EUR',
+        ?DateTimeInterface $lastEventAt = null,
+    ): self {
+        EventRules::checkTrackable($trackable);
+
+        $this->totals[$trackable] = new Total(
+            handle: $trackable,
+            count: $count,
+            amount: self::amount($amount),
+            currency: $currency,
+            lastEventAt: $lastEventAt === null ? null : CarbonImmutable::instance($lastEventAt)->utc(),
+        );
+
+        return $this;
+    }
+
+    public function total(string $trackable): Total
+    {
+        EventRules::checkTrackable($trackable);
+
+        return $this->totals[$trackable] ?? throw new BumpException(
+            'Bump refused the read: No trackable with that handle in this project.',
+            404,
+            'resource_missing',
+        );
     }
 
     public function assertForgotten(Model|string|int $identifiable): void
@@ -239,6 +276,25 @@ final class BumpFake implements Fake
 
             $this->dropped[$trackable][] = $e->getMessage();
         }
+    }
+
+    /**
+     * Two decimals, like the API answers. A float has to be exactly the float of a two-decimal number:
+     * 59.9 becomes "59.90", while 0.1 + 0.2 throws instead of being rounded.
+     */
+    private static function amount(int|float|string $amount): string
+    {
+        $text = is_float($amount) ? sprintf('%.2F', $amount) : (string) $amount;
+
+        if ((is_float($amount) && (float) $text !== $amount) || preg_match('/^(-?)(\d+)(?:\.(\d{1,2}))?$/', $text, $parts) !== 1) {
+            throw new InvalidArgumentException('withTotal() takes an amount with at most 2 decimals, got '.var_export($amount, true).'.');
+        }
+
+        $units = ltrim($parts[2], '0') ?: '0';
+        $cents = str_pad($parts[3] ?? '', 2, '0');
+        $sign = $parts[1] === '-' && ($units !== '0' || $cents !== '00') ? '-' : '';
+
+        return "{$sign}{$units}.{$cents}";
     }
 
     private function droppedNote(string $trackable): string

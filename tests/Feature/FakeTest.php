@@ -1,19 +1,23 @@
 <?php
 
-// Bump::fake() records calls the way real delivery would build them, sends nothing, and fails assertions with readable messages.
+// Bump::fake() records calls the way real delivery would build them, sends nothing, fails assertions with readable messages,
+// and answers total() with what withTotal() set.
 
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\ExpectationFailedException;
+use StickySoftware\Bump\Exceptions\BumpException;
 use StickySoftware\Bump\Facades\Bump;
 use StickySoftware\Bump\Testing\BumpFake;
 use StickySoftware\Bump\Testing\TrackedEvent;
 use StickySoftware\Bump\Tests\Fixtures\Shop;
 use StickySoftware\Bump\Tests\Fixtures\Team;
 use StickySoftware\Bump\Tests\Fixtures\User;
+use StickySoftware\Bump\Total;
 use StickySoftware\Bump\Tracker;
 
 afterEach(function () {
@@ -514,4 +518,123 @@ describe('tracked', function () {
             ->and(Bump::tracked('orders', fn (TrackedEvent $event) => $event->amount > 0)->pluck('amount')->all())->toBe([10, 20])
             ->and(Bump::tracked('refunds'))->toBeEmpty();
     });
+});
+
+describe('totals', function () {
+    it('returns what withTotal() set', function () {
+        Bump::fake()->withTotal('exports.png', count: 3, amount: 59.94, currency: 'USD', lastEventAt: Carbon::parse('2026-10-18T18:48:55+02:00'));
+
+        $total = Bump::total('exports.png');
+
+        expect($total)->toBeInstanceOf(Total::class)
+            ->and($total->handle)->toBe('exports.png')
+            ->and($total->count)->toBe(3)
+            ->and($total->amount)->toBe('59.94')
+            ->and($total->currency)->toBe('USD')
+            ->and($total->lastEventAt)->toBeInstanceOf(CarbonImmutable::class)
+            ->and($total->lastEventAt->format('Y-m-d H:i:s e'))->toBe('2026-10-18 16:48:55 UTC');
+    });
+
+    it('defaults to an empty total in EUR', function () {
+        Bump::fake()->withTotal('exports.png');
+
+        $total = Bump::total('exports.png');
+
+        expect($total->count)->toBe(0)
+            ->and($total->amount)->toBe('0.00')
+            ->and($total->currency)->toBe('EUR')
+            ->and($total->lastEventAt)->toBeNull();
+    });
+
+    it('chains and replaces', function () {
+        Bump::fake()
+            ->withTotal('exports.png', count: 1)
+            ->withTotal('orders', count: 2)
+            ->withTotal('exports.png', count: 5);
+
+        expect(Bump::total('exports.png')->count)->toBe(5)
+            ->and(Bump::total('orders')->count)->toBe(2);
+    });
+
+    it('also takes withTotal() from the facade', function () {
+        Bump::fake();
+
+        Bump::withTotal('orders', count: 2);
+
+        expect(Bump::total('orders')->count)->toBe(2);
+    });
+
+    it('writes the amount with two decimals, exactly', function (int|float|string $amount, string $expected) {
+        Bump::fake()->withTotal('orders', amount: $amount);
+
+        expect(Bump::total('orders')->amount)->toBe($expected);
+    })->with([
+        [59.9, '59.90'],
+        [59.94, '59.94'],
+        [0.07, '0.07'],
+        [1.1, '1.10'],
+        [-25, '-25.00'],
+        [-25.5, '-25.50'],
+        [0, '0.00'],
+        [-0.0, '0.00'],
+        [1e15, '1000000000000000.00'],
+        ['59.9', '59.90'],
+        ['-0.5', '-0.50'],
+        ['007', '7.00'],
+        ['12345678901234567890.12', '12345678901234567890.12'],
+    ]);
+
+    it('throws for an amount it would have to round', function (float|string $amount) {
+        Bump::fake();
+
+        expect(fn () => Bump::withTotal('orders', amount: $amount))->toThrow(InvalidArgumentException::class, 'withTotal() takes an amount with at most 2 decimals');
+    })->with([
+        'a float with 3 decimals' => [1.005],
+        'float noise' => [0.1 + 0.2],
+        'infinity' => [INF],
+        'text with 3 decimals' => ['1.005'],
+        'not a number' => ['abc'],
+        'a comma' => ['59,94'],
+        'empty' => [''],
+    ]);
+
+    it('returns the total without a token, when turned off, and with a BUMP_URL real reads refuse', function () {
+        config(['bump.test_token' => null, 'bump.enabled' => false, 'bump.url' => 'http://api.bump.example']);
+        Bump::fake()->withTotal('orders', count: 2);
+
+        expect(Bump::total('orders')->count)->toBe(2);
+        Http::assertNothingSent();
+    });
+
+    it('throws like a real 404 for a trackable it was not given', function () {
+        Bump::fake()->withTotal('orders');
+
+        try {
+            Bump::total('exports.png');
+            $this->fail('total() did not throw.');
+        } catch (BumpException $e) {
+            expect($e->getMessage())->toBe('Bump refused the read: No trackable with that handle in this project.')
+                ->and($e->status)->toBe(404)
+                ->and($e->errorCode)->toBe('resource_missing')
+                ->and($e->retryAfter)->toBeNull();
+        }
+    });
+
+    it('starts without totals on every fake()', function () {
+        Bump::fake()->withTotal('orders');
+
+        Bump::fake();
+
+        expect(fn () => Bump::total('orders'))->toThrow(BumpException::class);
+    });
+
+    it('checks the handle like a real read', function (string $trackable, string $message) {
+        $fake = Bump::fake();
+
+        expect(fn () => Bump::total($trackable))->toThrow(InvalidArgumentException::class, $message)
+            ->and(fn () => $fake->withTotal($trackable))->toThrow(InvalidArgumentException::class, $message);
+    })->with([
+        'empty' => ['', 'An empty handle names no trackable.'],
+        'not UTF-8' => ["orders\xB1", "The handle isn't valid UTF-8."],
+    ]);
 });

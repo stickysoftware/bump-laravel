@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use InvalidArgumentException;
+use StickySoftware\Bump\Exceptions\BumpException;
 use Throwable;
 
 /**
@@ -82,6 +84,23 @@ final class Tracker
         } catch (Throwable $e) {
             Log::warning('Bump could not forget an identifiable.', ['exception' => $e->getMessage()]);
         }
+    }
+
+    /**
+     * Unlike sending, a read throws: there is no number to return without an answer.
+     *
+     * @throws InvalidArgumentException for an empty handle or one that isn't valid UTF-8
+     * @throws BumpException when the read fails
+     */
+    public function total(string $trackable): Total
+    {
+        EventRules::checkTrackable($trackable);
+
+        if (! config('bump.enabled')) {
+            throw new BumpException("Bump is turned off (BUMP_ENABLED), so it can't read totals.");
+        }
+
+        return app(Api::class)->total($trackable, (int) config('bump.sync_timeout'));
     }
 
     /**

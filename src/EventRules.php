@@ -36,6 +36,20 @@ final class EventRules
     }
 
     /**
+     * @throws InvalidArgumentException for an empty handle or one that isn't valid UTF-8
+     */
+    public static function checkTrackable(string $trackable): void
+    {
+        if ($trackable === '') {
+            throw new InvalidArgumentException('An empty handle names no trackable.');
+        }
+
+        if (! mb_check_encoding($trackable, 'UTF-8')) {
+            throw new InvalidArgumentException("The handle isn't valid UTF-8.");
+        }
+    }
+
+    /**
      * Every string, keys included: one invalid byte fails the JSON for the whole batch. Bytes are never
      * replaced, since a changed handle or id would count as a different one.
      */

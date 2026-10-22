@@ -16,7 +16,7 @@ return [
     // "queue" sends from a queued job, "sync" sends over HTTP while the request or command terminates.
     'delivery' => env('BUMP_DELIVERY', 'queue'),
 
-    // Seconds a sync request may take. Answers that take half of it or more are logged.
+    // Seconds a sync request or a read of totals may take. Sync answers that take half of it or more are logged.
     'sync_timeout' => (int) env('BUMP_SYNC_TIMEOUT', 5),
 
     // "prefixed_id" uses a model's spatie/laravel-prefixed-ids ID when it has one, "key" always uses

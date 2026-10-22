@@ -8,6 +8,7 @@ use Illuminate\Http\Client\Events\ResponseReceived;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use StickySoftware\Bump\Exceptions\BumpException;
 use StickySoftware\Bump\Facades\Bump;
 use StickySoftware\Bump\Tests\Fixtures\ListBackfill;
 use StickySoftware\Bump\Tests\Fixtures\Team;
@@ -74,6 +75,27 @@ it('forgets an identifiable after sending its events', function () {
 
     expect(array_column($this->responses, 0))->toBe([200, 200])
         ->and($body['forgotten'])->toBeTrue();
+})->group('end-to-end');
+
+it('reads the totals of a trackable', function () {
+    Bump::track('e2e', amount: 1.5);
+    Bump::flush();
+
+    try {
+        $total = Bump::total('e2e');
+    } catch (BumpException $e) {
+        if ($e->errorCode === 'missing_ability') {
+            $this->markTestSkipped('The token can\'t read totals.');
+        }
+
+        throw $e;
+    }
+
+    expect($total->handle)->toBe('e2e')
+        ->and($total->count)->toBeGreaterThan(0)
+        ->and($total->amount)->toMatch('/^-?\d+\.\d{2}$/')
+        ->and($total->currency)->not->toBe('')
+        ->and($total->lastEventAt)->not->toBeNull();
 })->group('end-to-end');
 
 it('logs a refused token instead of throwing', function () {

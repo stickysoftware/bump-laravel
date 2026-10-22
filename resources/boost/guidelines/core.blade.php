@@ -33,6 +33,30 @@ Bump::adjust('orders', identifiable: $order->user, amount: -25.00, note: 'partia
 - Call it where the app stops tracking that person, for example in the account deletion itself. Events recorded earlier in the same request, command or job go out first, but events queued earlier by other processes can still arrive after the forget and create the identifiable again.
 - The token needs "Can forget identifiables", set when it's created. Without it `forget()` logs a warning and forgets nothing.
 
+## Reading totals
+
+- `Bump::total('orders')` returns a `StickySoftware\Bump\Total` with the trackable's totals for the whole project: `count` (int), `amount` (string with two decimals in the project currency, `"59.94"`), `currency` and `lastEventAt` (`?CarbonImmutable`, UTC). Keep `amount` a string; don't cast it to float.
+- Read on a schedule, in a scheduled command, and store the number with `Cache::forever()` or in the database. Pages show the stored number. Never call `total()` while rendering a page: the page would wait on Bump.
+- Unlike `track()`, `total()` throws: `StickySoftware\Bump\Exceptions\BumpException` with `status`, `errorCode` and `retryAfter`. In the scheduled command, let it fail so the last stored number stays.
+- The token needs "Can read totals", set when it's created. One token sends and reads.
+- In tests, `Bump::fake()->withTotal('orders', count: 3, amount: 59.94)`. A trackable not set throws like a 404.
+
+@boostsnippet('Read a total on a schedule', 'php')
+// routes/console.php
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schedule;
+use StickySoftware\Bump\Facades\Bump;
+
+Artisan::command('orders:count', function () {
+    Cache::forever('orders.count', Bump::total('orders')->count);
+});
+
+Schedule::command('orders:count')->hourly();
+
+// In the page: Cache::get('orders.count')
+@endboostsnippet
+
 ## Activity
 
 - An event counts as activity (DAU/WAU/MAU) by the trackable's setting in the Bump dashboard.

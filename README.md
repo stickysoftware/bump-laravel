@@ -35,7 +35,7 @@ php artisan vendor:publish --tag=bump-config
 
 Create tokens in Bump under **Developers > API tokens**, once with the sidebar on live and once on test. Production gets `BUMP_LIVE_TOKEN`. Every other environment gets `BUMP_TEST_TOKEN`, so tests and staging never touch live numbers.
 
-The live token is used only when `APP_ENV` is exactly `production`. Without the token for the current environment, the package is off: calls are accepted and dropped, with one log line per process. That line is a `warning` in production and `debug` everywhere else.
+The live token is used only when `APP_ENV` is exactly `production`. Without the token for the current environment, the package is off: calls are accepted and dropped, with one log line per process. That line is a `warning` in production and `debug` everywhere else. [Reading totals](#reading-totals) throws instead.
 
 `php artisan about` has a Bump section with the settings below, which token the environment uses and whether it's set. Never the token itself.
 
@@ -47,11 +47,11 @@ The live token is used only when `APP_ENV` is exactly `production`. Without the 
 | `BUMP_TEST_TOKEN` | | Used in every other environment |
 | `BUMP_URL` | `https://api.bumpbunny.dev` | The host only, the package adds `/v1`. https, or plain http on localhost, 127.0.0.1, ::1, `*.test` and `*.localhost` |
 | `BUMP_DELIVERY` | `queue` | `queue` or `sync` |
-| `BUMP_SYNC_TIMEOUT` | `5` | Seconds, `sync` only |
+| `BUMP_SYNC_TIMEOUT` | `5` | Seconds, for `sync` delivery and reading totals |
 | `BUMP_HANDLES` | `prefixed_id` | `prefixed_id` or `key`, see [Identifiables](#identifiables) |
 | `BUMP_QUEUE_CONNECTION` | app default | |
 | `BUMP_QUEUE` | app default | |
-| `BUMP_ENABLED` | `true`, `false` under `APP_ENV=testing` | `false` drops every call |
+| `BUMP_ENABLED` | `true`, `false` under `APP_ENV=testing` | `false` drops every call, and `total()` throws |
 
 ## Usage
 
@@ -148,6 +148,64 @@ The token needs **Can forget identifiables**, a switch you turn on when you crea
 
 Events this request, command or job already recorded go out before the forget. With `sync` delivery both are sent right away, during the call. Events queued earlier by other processes can still arrive after it and create the identifiable again, starting at zero. So call `forget()` once the app has stopped tracking that person, for example in the account deletion itself.
 
+### Reading totals
+
+`Bump::total()` reads one trackable's totals for the whole project, like the number of orders so far for a line on your homepage.
+
+It needs a token made with **Can read totals**. An existing token can't get it later, so make a new one and put it in the same `BUMP_LIVE_TOKEN` or `BUMP_TEST_TOKEN`. One token sends and reads.
+
+Read on a schedule and store the number:
+
+```php
+// routes/console.php
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schedule;
+use StickySoftware\Bump\Facades\Bump;
+
+Artisan::command('orders:count', function () {
+    Cache::forever('orders.count', Bump::total('orders')->count);
+});
+
+Schedule::command('orders:count')->hourly();
+```
+
+The page shows the stored number:
+
+```php
+$orders = Cache::get('orders.count');
+```
+
+A page never waits on Bump this way, and a failed read keeps the last number.
+
+`Cache::remember()` is the shortcut:
+
+```php
+$orders = Cache::remember('orders.count', now()->addHour(), fn () => Bump::total('orders')->count);
+```
+
+The catch: a failed read caches nothing and throws in the page that asked, and a cleared cache puts Bump back in a page load.
+
+`total()` returns a `StickySoftware\Bump\Total`:
+
+| Field | |
+|---|---|
+| `handle` | The trackable's handle |
+| `count` | The total count, an int |
+| `amount` | The total amount in the project currency, as a string with two decimals: `"59.94"`, `"0.00"` for a trackable that only counts |
+| `currency` | The project's currency, like `EUR` |
+| `lastEventAt` | When Bump received the latest event, a `CarbonImmutable` in UTC. `null` before the first one |
+
+Production reads with the live token and every other environment with the test token, so they read live and test totals. A read waits at most `BUMP_SYNC_TIMEOUT` seconds and is never retried.
+
+When a read fails, `total()` throws a `StickySoftware\Bump\Exceptions\BumpException`: Bump is turned off, the token isn't set, `BUMP_URL` isn't https, Bump can't be reached, Bump refuses the read, or the answer isn't a trackable. Its message never contains the token. Three fields tell you more, each `null` when it doesn't apply:
+
+- `status`: the HTTP status
+- `errorCode`: the API's error code, like `resource_missing` for a handle Bump doesn't know or `missing_ability` for a token without **Can read totals**
+- `retryAfter`: the seconds from a 429's `Retry-After`
+
+An empty handle, or one that isn't valid UTF-8, throws an `InvalidArgumentException` before any request. The API side is in Bump's [Reading totals](https://bumpbunny.dev/docs/reading-totals) docs.
+
 ### When events are sent
 
 Calls go into a buffer that is sent once per web request or console command (when it terminates) and once per queued job (when it's processed or fails), or earlier when it holds 100 events. Each event gets its id and `occurred_at` when you call `track()`, not when the buffer is sent.
@@ -168,7 +226,9 @@ Under Octane, use `queue`: sync delivery holds the worker until Bump answers.
 
 ### Failures
 
-The package never throws into your app. It logs instead:
+Sending never throws into your app. Reading does, see [Reading totals](#reading-totals).
+
+When sending goes wrong, the package logs:
 
 - `error` when Bump refuses a batch (400, 401, 403) with the API's error code and message, when `BUMP_URL` answers with a redirect (never followed), when a batch can't be queued, and when retries run out
 - `warning` for each event Bump rejects, with the field and the reason
@@ -271,6 +331,14 @@ Also there: `assertTrackedTimes('orders', 2)`, `assertNothingTracked()`, and `tr
 
 The callback gets a `TrackedEvent` per call: `trackable`, `identifiables`, `count`, `amount`, `occurredAt`, `note`, `activity`, `adjustment` and `id`. Models are resolved to handles like in real delivery, and a call real delivery would drop, an unsaved model for example, is dropped here too: the failing assertion says why. `adjust()` calls count as tracked, with `adjustment` true and their defaults filled in. A field the call leaves out is `null`, and so is `id` when the package makes one up.
 
+For code that reads totals, tell the fake what `total()` returns:
+
+```php
+Bump::fake()->withTotal('orders', count: 3, amount: 59.94);
+```
+
+The amount becomes the API's two-decimal string, so `59.9` is `"59.90"`, and one with more decimals throws. The fake returns the total with or without a token and with `BUMP_ENABLED` off. A trackable you didn't set throws the same `BumpException` as a handle Bump doesn't know: `status` 404, `errorCode` `resource_missing`. Without the fake, `total()` throws in tests, since `BUMP_ENABLED` is off there.
+
 ## Known limits
 
 - `track()` inside a database transaction that rolls back is still sent. Wrap it in `DB::afterCommit(fn () => Bump::track(...))` where that matters.
@@ -301,7 +369,7 @@ The end-to-end tests send real requests and are skipped by default. Run them wit
 BUMP_E2E_TOKEN=bump_test_… vendor/bin/pest --group=end-to-end
 ```
 
-`BUMP_E2E_URL` defaults to `https://api.bumpbunny.dev`. The forget test needs a token with **Can forget identifiables** and is skipped without it.
+`BUMP_E2E_URL` defaults to `https://api.bumpbunny.dev`. The forget test needs a token with **Can forget identifiables**, the read test one with **Can read totals**. Each is skipped without it.
 
 ## License
 
