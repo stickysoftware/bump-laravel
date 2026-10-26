@@ -2,7 +2,7 @@
 
 All notable changes to `stickysoftware/bump-laravel` are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## 1.2.0 - Unreleased
+## 1.2.0 - 2026-10-26
 
 - `cents:` on `Bump::track()` and `Bump::adjust()`, for whole cents like a Cashier amount or a `*_cents` column: `cents: 4999` sends `"49.99"`. It takes an int or a list, and comes last, so calls that pass arguments by position keep working. Backfill events take a `cents` key the same way.
 - Every amount is sent as a string with two decimals: `49.99` as `"49.99"`, `50.0` as `"50.00"`. Float noise like `0.1 + 0.2` goes out as `"0.30"`.
