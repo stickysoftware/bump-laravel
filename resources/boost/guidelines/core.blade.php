@@ -2,6 +2,8 @@
 
 This app sends events to Bump with `stickysoftware/bump-laravel`. Bump keeps exact running totals per trackable, per identifiable and project-wide, and fires milestones when totals cross objectives.
 
+To add Bump to the app or decide what to track, use the `bump-setup` skill.
+
 ## Tracking
 
 - Call `Bump::track()` (facade `StickySoftware\Bump\Facades\Bump`) where the thing happens: an order is paid, a member joins. Calls are buffered and sent once per request, command or job. They never throw into the app.
@@ -17,11 +19,11 @@ This app sends events to Bump with `stickysoftware/bump-laravel`. Bump keeps exa
 @boostsnippet('Track and adjust', 'php')
 use StickySoftware\Bump\Facades\Bump;
 
-Bump::track('orders', identifiable: $order->user, amount: $order->total, id: "order-{$order->id}");
+Bump::track('orders', identifiable: $order->user, amount: $order->total, id: "orders-{$order->id}");
 
 Bump::track('members', identifiable: $team, count: -1);
 
-Bump::adjust('orders', identifiable: $order->user, amount: -25.00, note: 'partial refund', id: "refund-{$refund->id}");
+Bump::adjust('orders', identifiable: $order->user, amount: -25.00, note: 'partial refund', id: "refunds-{$refund->id}");
 @endboostsnippet
 
 ## Sending

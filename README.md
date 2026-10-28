@@ -76,7 +76,7 @@ Bump::track(
     occurredAt: $order->paid_at,
     note: 'first order',
     activity: true,
-    id: "order-{$order->id}",
+    id: "orders-{$order->id}",
 );
 ```
 
@@ -142,13 +142,13 @@ Bump counts an event as activity (DAU, WAU, MAU) by the trackable's setting. Web
 Every event carries an id, and Bump counts an id once. Without `id:` the package makes up a UUID per call, which keeps the package's own retries safe. Pass your own when the same thing can happen twice in your app, like a webhook that's delivered again or a job that runs twice:
 
 ```php
-Bump::track('orders', identifiable: $order->user, amount: $order->total, id: "order-{$order->id}");
+Bump::track('orders', identifiable: $order->user, amount: $order->total, id: "orders-{$order->id}");
 ```
 
 One id per event: a refund needs its own, or Bump takes it for the order again and skips it.
 
 ```php
-Bump::adjust('orders', identifiable: $order->user, amount: -25.00, id: "refund-{$refund->id}");
+Bump::adjust('orders', identifiable: $order->user, amount: -25.00, id: "refunds-{$refund->id}");
 ```
 
 An id takes 1 to 64 characters. An empty or longer one drops the event with a warning. With a `count`, `amount` or `cents` list, send one id for the call: Bump gives each value its own key from it.
@@ -369,7 +369,16 @@ The amount becomes the API's two-decimal string, so `59.9` is `"59.90"` and `cen
 
 ## AI agents
 
-The package ships [Laravel Boost](https://github.com/laravel/boost) guidelines in `resources/boost/guidelines/core.blade.php`. Run `php artisan boost:update` after installing and pick `stickysoftware/bump-laravel` when asked, and your app's agents learn how to use it.
+The package ships two things for [Laravel Boost](https://github.com/laravel/boost):
+
+- A guideline, `resources/boost/guidelines/core.blade.php`: how to call the package.
+- A skill, `bump-setup`: how to add Bump to an app. The agent reads your app, asks you what to track in two rounds of questions, shows the plan, and builds it once you confirm. Ask your agent to set up Bump.
+
+After installing the package, run `php artisan boost:update` and pick `stickysoftware/bump-laravel` when it asks. Boost adds the guideline to your agents' guideline files (`CLAUDE.md`, `AGENTS.md`) and the skill to their skills folder, like `.claude/skills/bump-setup` for Claude Code. On a first `php artisan boost:install`, tick it in the list of third-party guidelines and skills.
+
+With `--no-interaction`, or from a Composer script, Boost doesn't ask and only adds packages already in the `packages` list of `boost.json`. Add `stickysoftware/bump-laravel` to that list and run `php artisan boost:update --no-interaction`.
+
+Without Boost, point your agent at `vendor/stickysoftware/bump-laravel/resources/boost/skills/bump-setup/SKILL.md`.
 
 ## Changelog
 
