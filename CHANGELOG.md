@@ -2,7 +2,7 @@
 
 All notable changes to `stickysoftware/bump-laravel` are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## 1.3.0 - Unreleased
+## 1.3.0 - 2026-10-29
 
 - A Laravel Boost skill, `bump-setup`, that walks a coding agent through adding Bump to an app: it reads the app, asks what to track, then adds the calls, backfill and tests. `php artisan boost:update` installs it with the guideline. Without Boost, an agent can read it from `resources/boost/skills/bump-setup/SKILL.md`.
 
