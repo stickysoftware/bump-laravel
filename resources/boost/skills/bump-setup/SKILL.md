@@ -8,9 +8,9 @@ metadata:
 
 # Set up Bump
 
-Three phases, in order: survey, ask, implement. Nothing in the app changes before the user has answered both rounds of questions and confirmed the plan.
+Three phases, in order: survey, ask, implement. Survey and Ask only read: no `composer require`, no file changes, no command that writes. Nothing in the app changes before the user has answered both rounds of questions and confirmed the plan.
 
-Two files hold the rules this skill builds on, both in `vendor/stickysoftware/bump-laravel/` (before the package is installed, read them at https://github.com/stickysoftware/bump-laravel):
+Two files hold the rules this skill builds on, both in `vendor/stickysoftware/bump-laravel/`. Before the package is installed, download them with `curl -fsSL` from `https://raw.githubusercontent.com/stickysoftware/bump-laravel/main/` plus the path, and read them whole: a web fetch tool that summarizes drops the rules.
 
 - `README.md`: what the package does. Sections are named below.
 - `resources/boost/guidelines/core.blade.php`: the guideline for calling the package (handles, amounts, ids, activity, tests). When Laravel Boost installed it, it's also in the app's `CLAUDE.md` or `AGENTS.md`. Follow it for every call you write.
@@ -26,7 +26,8 @@ Find:
 - **Records.** Signups, invites, team members, and the app's core records being created.
 - **Moments that aren't models.** Routes, controller actions, Livewire actions, jobs: checkout opened, export downloaded, invite sent, report generated. They're count-only and often a good activity signal.
 - **Hooks.** Domain events, listeners and observers (`app/Events`, `app/Listeners`, `app/Observers`, Cashier's `WebhookReceived`).
-- **Handles.** Whether models use `spatie/laravel-prefixed-ids`, and which ones.
+- **Handles.** Whether models use `spatie/laravel-prefixed-ids`, which ones, and each one's prefix as the code registers it (`PrefixedIds::registerModels()` or `registerModel()`, usually in a service provider). Never guess a prefix.
+- **Tests.** Which database the tests use: `phpunit.xml`, `.env.testing`, `tests/bootstrap.php`, `tests/TestCase.php`. Implement step 10 needs it.
 - **Queue.** `QUEUE_CONNECTION` in `.env.example`, `laravel/horizon`, `laravel/octane`, a worker in the deploy config (`Procfile`, supervisor config, Forge or Cloud scripts, `docker-compose.yml`). The `dev` script in `composer.json` is local only.
 - **History.** Which records could be backfilled, and the column the event happened at (`paid_at`, `created_at`). The local database isn't production, so never quote its earliest date as the app's.
 
@@ -45,45 +46,54 @@ Use the harness's structured question tool when there is one (`AskUserQuestion` 
 
 **Round 2**, after round 1 is answered:
 
-1. **What makes someone active?** Multi-select, up to 3 of the trackables chosen in round 1 (the ones people cause directly first), plus "None". Activity drives Active today, Last 7 days and Last 30 days in Bump.
+1. **What makes someone active?** Multi-select, up to 3 of the trackables chosen in round 1, plus "None". Activity drives Active today, Last 7 days and Last 30 days in Bump. Active means someone used the app: the action people come for, like an export, a published report or a download. What that is depends on the app: in a shop it's placing an order. Signups, invites, membership changes and renewals the app charges on its own are admin or the system acting, and would count someone as active who hasn't used the app. Recommend the actions people come for, and say why in the question.
 2. **Send past data?** "Yes, from the first record" or "No, start from today". Name the records and the column you'd read.
 3. **Queue or sync?** Only when no queue worker was found. Recommend `sync`, unless the app runs Octane: then `queue`, and the app needs a worker.
 
 Candidates beyond 4 don't go in the questions. They go below the plan table, where the user can add them.
 
-**Hard stop.** No file changes, no `composer require`, until both rounds are answered. Then show the plan as one table:
+**Hard stop.** No file changes, no `composer require`, until the user has answered both rounds and picked "Build it" below. Show the plan as one table:
 
 | Trackable | Call goes in | Identifiables | Count / amount | Event id | Activity | Backfill |
 |---|---|---|---|---|---|---|
 | `orders` | `app/Listeners/MarkOrderPaid.php:24` | `$order->team` | 1, `cents: $order->total_cents` | `orders-{$order->id}` | yes | from first order, `paid_at` |
 
-Below it, one line each: the label you'd send (`Team::bumpLabel()` returns the team name, or none), the `.env` changes, and the candidates you left out. If the app charges in more than one currency, say that Bump sums amounts in the project's one currency, and which amounts that affects. If the customer model has no prefixed ID, say that adding one later restarts its totals (README: Known limits). Ask the user to confirm or change it. Build only after they confirm.
+Below it, one line each: the label you'd send (`Team::bumpLabel()` returns the team name, or none), the `.env` changes, the privacy policy line, and the candidates you left out. If the app charges in more than one currency, say that Bump sums amounts in the project's one currency, and which amounts that affects. If the customer model has no prefixed ID, say that adding one later restarts its totals (README: Known limits).
+
+The privacy policy line is a suggestion for the user, filled in from the plan, in this shape:
+
+> **Bump** (bumpbunny.dev): product metrics and milestones. We send counts and amounts (orders, signups), traceable to your team, and Bump tells us when a total crosses a goal we set. No email addresses or personal names.
+
+When the plan sends a label, write "traceable to your team, with its name". A handle is pseudonymous, not anonymous: the app can trace it back to the team or user, so never call it anonymous. Don't edit the privacy policy or terms unless the user asks you to.
+
+Then ask, with the question tool when there is one: **Build this plan?** Options: "Build it (Recommended)", "Change something", "Not now". Build only after "Build it". After "Change something", show the changed plan and ask again. After "Not now", stop: the plan is theirs to keep, and nothing in the app has changed.
 
 Every question and message you show the user: plain words, short sentences, no em dashes, no hype.
 
 ## 3. Implement
 
-1. **Package.** `composer require stickysoftware/bump-laravel` if it isn't in `composer.json` yet.
+1. **Package.** `composer require stickysoftware/bump-laravel` if it isn't in `composer.json` yet. If the app uses Laravel Boost (`laravel/boost` in `composer.json` and a `boost.json`), add `stickysoftware/bump-laravel` to the `packages` list in `boost.json`, creating the key if it's missing (Boost skips a new package without it), then run `php artisan boost:update --no-interaction`.
 2. **Environment.** Add `BUMP_TEST_TOKEN=` and `BUMP_LIVE_TOKEN=`, both empty, to `.env` and `.env.example`, plus `BUMP_DELIVERY=sync` if the user chose sync. Then ask the user to make the token themselves: "In Bump, switch the sidebar to **Test**, open **Developers > API tokens** and create a token. Paste it after `BUMP_TEST_TOKEN=` in `.env`, not here." Never ask for a token in the chat, and never print, log or read one back. `php artisan about --only=bump` says whether it's set without showing it. If a token lands in the chat anyway, don't use or repeat it: ask the user to revoke it in Bump and make a new one.
 3. **Calls.** Put each call where the thing happens, after the database commit: after `DB::transaction()` returns, or in `DB::afterCommit()` when it's inside one. Prefer the action, listener or webhook handler over a model's `created` observer, which also fires for seeders and imports. An observer you do use implements `Illuminate\Contracts\Events\ShouldHandleEventsAfterCommit`. README: Known limits.
 4. **Event ids.** Every call about a record gets an id from that record: `orders-{$order->id}`, `refunds-{$refund->id}`, `members-left-{$membership->id}`. A different event on the same record needs a different id. Something that repeats takes its id from what repeats: a monthly renewal from the invoice or payment, never the subscription, or Bump counts only the first. Use the same id in the live call and the backfill class, so an event sent both ways counts once. Moments without a record leave `id:` out. README: Event ids.
 5. **Identifiables.** Pass the model and let `BUMP_HANDLES` (default `prefixed_id`) make the handle. Add `bumpHandle()` only if the user asked for it. Handles and labels never carry an email address, a person's name or other personal data. A team or company name as a label is fine: add `bumpLabel()` only if the plan says so. README: Identifiables.
 6. **Amounts.** Cents ints go in `cents:`, decimals in `amount:`. README: Amounts.
 7. **Refunds.** On the same trackable: `Bump::adjust()` with a negative amount and the refund's own id. As a separate trackable: `Bump::track('refunds', ...)` with a positive amount.
-8. **Activity.** Which trackables count as activity is a switch per trackable in Bump, **Counts as activity**, on for a new one. Don't pass `activity` to turn a trackable off: the switch does that (step 11). Follow the guideline's Activity rules for the rest: nothing in a web request a person made, `activity: true` in a job or command run on a person's behalf, `activity: false` in a payment provider's webhook. README: Activity.
+8. **Activity.** Which trackables count as activity is a switch per trackable in Bump, **Counts as activity**, on for a new one. Don't pass `activity` to turn a trackable off: the switch does that (step 11). Follow the guideline's Activity rules for the rest: nothing in a web request a person made, `activity: true` in a job or command run on a person's behalf, `activity: false` in a webhook nobody caused just then, like a renewal the app charged on its own. A webhook confirming a checkout someone just paid leaves it to the switch. README: Activity.
 9. **Backfill.** If chosen: one class per kind of history with `php artisan make:bump-backfill`, filled in per README: Backfill, with the same ids as the live calls. Refund history on the same trackable sends what `adjust()` sends: `'count' => 0`, `'activity' => false` and a negative amount. Check each class with `php artisan bump:backfill "App\Bump\OrdersBackfill" --dry-run --until=now`: a dry run sends nothing and needs no token, so `now` is fine there and nowhere else. Don't run it for real here: it needs Tracking since from production.
-10. **Tests.** One test per call site with `Bump::fake()` and `assertTracked()`, checking the identifiable, the amount and the id, plus a refund test. Use the app's test framework and style. README: Testing your app. Run them.
+10. **Tests.** One test per call site with `Bump::fake()` and `assertTracked()`, checking the identifiable, the amount and the id, plus a refund test. Use the app's test framework and style. README: Testing your app. Run them only against a separate test database, as found in the survey: an in-memory SQLite or a database of its own, never the one `.env` points at. Tests that refresh the database empty it. A new worktree or checkout doesn't bring untracked files like `.env.testing` along, and without it Laravel falls back to `.env`. If you can't show the tests use a separate database, don't run them: tell the user and ask. Never load production data into a local database, to repair one or for anything else.
 11. **One test event per trackable.** Once the user has pasted the token, tell them a project's timezone and currency are fixed after its first event, test events included, so check them under **Settings** first. Then send one event for each trackable in the plan, which also creates it in Bump:
 
     ```bash
     BUMP_DELIVERY=sync php artisan tinker --execute 'StickySoftware\Bump\Facades\Bump::track("orders", activity: false, id: "setup-check-orders");'
     ```
 
-    Tell the user to open **Developers > Events** in Bump, sidebar on **Test**, to see them. If they aren't there, check `php artisan about --only=bump` and the Bump lines in `storage/logs/laravel.log`. Then name each trackable the plan doesn't count as activity, and ask the user to open it under **Trackables** and switch off **Counts as activity**, before production sends anything. Trackables and the switch are shared by live and test.
+    Tell the user to open **Developers > Events** in Bump, sidebar on **Test**, to see them. If they aren't there, check `php artisan about --only=bump` and the Bump lines in `storage/logs/laravel.log`. Then ask the user to open each trackable the plan doesn't count as activity under **Trackables** and switch off **Counts as activity**, before production sends anything. Tie it to their answer: "You picked `exports` and `downloads` as activity, so switch it off for `orders`, `signups` and `invites`." Trackables and the switch are shared by live and test.
 
 Finish with what changed and the deploy steps, each on its own line:
 
 - Production `.env`: `BUMP_LIVE_TOKEN`, a token made with the sidebar on **Live**. It's used only when `APP_ENV` is exactly `production`. Staging gets a test token in `BUMP_TEST_TOKEN`, never the live one.
 - In Bump, **Counts as activity** switched off for every trackable the plan doesn't count as activity, before the deploy.
 - If sync was chosen: `BUMP_DELIVERY=sync` on production and staging. Otherwise a queue worker has to run there.
+- Privacy policy: the line from the plan, unless the user already added it. Bump belongs in the policy's list of processors if it has one.
 - Backfill, if chosen: after production sent its first events, copy **Tracking since** from **Developers > Events** on **Live** and run `php artisan bump:backfill ... --until="<Tracking since>"` on production, `--dry-run` first.

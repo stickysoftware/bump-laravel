@@ -2,6 +2,21 @@
 
 All notable changes to `stickysoftware/bump-laravel` are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 1.3.1 - Unreleased
+
+`bump-setup` changes:
+
+- It only reads the app until the plan is confirmed, including the package install and the Boost update. The confirm is a question: build it, change something, or not now.
+- It runs tests only against a separate test database. In a new worktree without `.env.testing`, Laravel falls back to `.env`, and a test that refreshes the database empties the development one.
+- Active means someone used the app. The activity question recommends the actions people come for (in a shop, placing an order), not signups, invites or renewals the app charges on its own, and the reminder to switch off **Counts as activity** names the user's answer.
+- The plan suggests a line for the app's privacy policy, and the skill leaves the policy itself to the user.
+- Model prefixes are read from where the app registers them, never guessed.
+
+Guideline:
+
+- A payment webhook for a checkout someone just paid leaves activity to the trackable's setting. Only a webhook nobody caused just then, like an automatic renewal, sends `activity: false`.
+- Event id examples use the plural form (`orders-1042`, `refunds-77`), like the README.
+
 ## 1.3.0 - 2026-10-29
 
 - A Laravel Boost skill, `bump-setup`, that walks a coding agent through adding Bump to an app: it reads the app, asks what to track, then adds the calls, backfill and tests. `php artisan boost:update` installs it with the guideline. Without Boost, an agent can read it from `resources/boost/skills/bump-setup/SKILL.md`.

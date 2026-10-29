@@ -13,7 +13,7 @@ To add Bump to the app or decide what to track, use the `bump-setup` skill.
 - Amounts are in the project currency. Pass a decimal as `amount:` (a float or a string, at most 2 decimals: `49.99`, `'49.99'`), or whole cents as `cents:` (an int: `cents: $order->total_cents`, a Cashier amount). Never both in one call.
 - Never pass an int to `amount:`: it's sent as it is and Bump refuses it, since it could be cents. Use `cents:` for cents, and `50.0` or `'50.00'` for a whole amount. Never round an amount to fit: a third decimal drops the call.
 - Totals are additive. Never send a new total; send the difference, negative when it goes down.
-- Pass `id:` when the same thing can be tracked twice: a webhook delivered again, a job that runs twice. Derive it from the app's own data (`order-1042`), max 64 characters. One id per event: a refund gets its own (`refund-77`), never the order's. Without `id:` the package generates a UUID per call.
+- Pass `id:` when the same thing can be tracked twice: a webhook delivered again, a job that runs twice. Derive it from the app's own data (`orders-1042`), max 64 characters. One id per event: a refund gets its own (`refunds-77`), never the order's. Without `id:` the package generates a UUID per call.
 - `count` and `amount` (or `cents`) can't both be lists in one call; the package drops that call.
 
 @boostsnippet('Track and adjust', 'php')
@@ -65,7 +65,7 @@ Schedule::command('orders:count')->hourly();
 
 - An event counts as activity (DAU/WAU/MAU) by the trackable's setting in the Bump dashboard.
 - In web requests the package sends no `activity` field, so the setting applies. In queued jobs and console commands it sends `activity: false`, because there the system acted, not a person.
-- Pass `activity: true` in a job or command that runs on a person's behalf (for example a job processing an upload they just made). Pass `activity: false` in a web request a person didn't cause (for example a webhook from a payment provider).
+- Pass `activity: true` in a job or command that runs on a person's behalf (for example a job processing an upload they just made). Pass `activity: false` in a web request a person didn't cause (for example a payment webhook for a renewal the app charged on its own). A webhook confirming a payment someone just made at checkout leaves it to the setting.
 
 ## Identifiables
 
